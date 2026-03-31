@@ -220,7 +220,10 @@ export default {
     this._lastVW = 0
     this._lastVH = 0
     this._gltfLoader = new GLTFLoader()
-    this._renTemplate = null   // ren.glb 缓存，克隆复用
+    this._renTemplate = null   // rig_people.glb 缓存，克隆复用
+    this._renClips = []        // 动画 clips 缓存
+    this._mixers = {}          // tid → AnimationMixer
+    this._prevT = 0            // renderLoop 上一帧时间戳
   },
   computed: {
     selectedTrack() {
@@ -476,13 +479,14 @@ export default {
         this._buildScanRings(this._riderGroup)
       })
 
-      // ── 预加载 ren.glb 模板 ──
-      this._gltfLoader.load('/3dmodel/ren.glb', (gltf) => {
+      // ── 预加载 rig_people.glb 模板 ──
+      this._gltfLoader.load('/3dmodel/rig_people.glb', (gltf) => {
         this._renTemplate = gltf.scene
+        this._renClips = gltf.animations || []
         this._renTemplate.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true } })
-        console.log('ren.glb 加载成功，替换已有占位符')
+        console.log('rig_people.glb 加载成功，动画 clips:', this._renClips.map(c => c.name))
         // 替换所有已创建 group 里的占位符
-        Object.values(this._tm).forEach(({ group }) => {
+        Object.entries(this._tm).forEach(([tid, { group }]) => {
           const ph = group.children.find(c => c.userData && c.userData.isPlaceholder)
           if (ph) {
             group.remove(ph)
@@ -491,10 +495,11 @@ export default {
             model.scale.setScalar(1.5)
             group.add(model)
             group._modelRoot = model
+            this._startWalkAnim(Number(tid), model)
           }
         })
       }, undefined, (err) => {
-        console.error('ren.glb 加载失败', err)
+        console.error('rig_people.glb 加载失败', err)
       })
 
       canvas.addEventListener('mousedown', this.onMouseDown)
@@ -574,11 +579,18 @@ export default {
     renderLoop() {
       this._raf = requestAnimationFrame(this.renderLoop)
       const t = performance.now() * 0.001
+      const delta = this._prevT ? t - this._prevT : 0.016
+      this._prevT = t
 
       // 骑手光圈脉冲动画
       if (this._riderGroup) {
         const glow = this._riderGroup.children.find(c => c.userData.isGlow)
         if (glow) { glow.material.opacity = 0.15 + Math.sin(t * 2) * 0.1 }
+      }
+
+      // 驱动所有人物行走动画
+      for (const mixer of Object.values(this._mixers)) {
+        mixer.update(delta)
       }
 
       this._r.render(this._s, this._c)
@@ -666,6 +678,7 @@ export default {
       if (!camHasPerson) {
         for (const tid of Object.keys(this._tm)) {
           this._s.remove(this._tm[tid].group)
+          if (this._mixers[tid]) { this._mixers[tid].stopAllAction(); delete this._mixers[tid] }
           delete this._tm[tid]
         }
         this._updateSectors([])
@@ -679,6 +692,7 @@ export default {
       for (const tid of Object.keys(this._tm)) {
         if (!newTids.has(Number(tid))) {
           this._s.remove(this._tm[tid].group)
+          if (this._mixers[tid]) { this._mixers[tid].stopAllAction(); delete this._mixers[tid] }
           delete this._tm[tid]
         }
       }
@@ -709,8 +723,14 @@ export default {
           this._tm[t.tid] = { group }
         }
 
-        const color = this.trackColor3d(t)
+        // 朝向：靠近(vy<0)→面朝电动车(+z方向)，远离(vy>=0)→背对(-z方向)
         const entry = this._tm[t.tid]
+        const facingAngle = t.vy < 0 ? Math.PI : 0
+        if (entry.group._modelRoot) {
+          entry.group._modelRoot.rotation.y = facingAngle
+        }
+
+        const color = this.trackColor3d(t)
         if (entry.group._ringMesh) {
           entry.group._ringMesh.material.color.setHex(color)
         }
@@ -727,6 +747,7 @@ export default {
         model.scale.setScalar(1.5)
         group.add(model)
         group._modelRoot = model
+        this._startWalkAnim(t.tid, model)
       } else {
         // ren.glb 尚未加载，先放占位圆柱；加载完后 initThree 回调统一替换
         const ph = new THREE.Mesh(
@@ -750,6 +771,17 @@ export default {
       group._colorMeshes = []
 
       return group
+    },
+
+    _startWalkAnim(tid, modelRoot) {
+      if (!this._renClips.length) return
+      const mixer = new THREE.AnimationMixer(modelRoot)
+      // 优先找名含 walk/run 的 clip，否则取第一条
+      const clip = this._renClips.find(c => /walk|run/i.test(c.name)) || this._renClips[0]
+      const action = mixer.clipAction(clip)
+      action.setLoop(THREE.LoopRepeat, Infinity)
+      action.play()
+      this._mixers[tid] = mixer
     },
 
     trackColor3d(t) {
