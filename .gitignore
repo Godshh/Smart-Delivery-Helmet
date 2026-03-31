@@ -21,3 +21,10 @@ pnpm-debug.log*
 *.njsproj
 *.sln
 *.sw?
+
+# 大型模型/二进制文件（需手动部署，不入库）
+public/models/
+public/tfjs/
+public/live2dcubismcore.min.js
+public/live2d.js
+public/live2d/
