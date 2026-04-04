@@ -125,7 +125,7 @@ export default {
       mapDestroyed: false,
       isChanged: false,
       coordinates: { left_lane: [], right_lane: [], timestamp: 0 },
-      baseUrl: "http://192.168.99.44:5008",
+      baseUrl: "http://10.194.90.44:5008",
       videoFeedUrl: "",
       coordinatesUrl: "",
       canvasWidth: 320,
@@ -430,7 +430,7 @@ export default {
     },
 
     connectSocketIO() {
-      this.socket = io("http://192.168.99.44:8081");
+      this.socket = io("http://10.194.90.44:8081");
       this.socket.on("gps_update", (data) => {
         const longitude = parseFloat(data.Longitude.slice(0, -1));
         const latitude = parseFloat(data.Latitude.slice(0, -1));
@@ -889,6 +889,8 @@ export default {
           this.convertTime(time);
           this.dh = true;
           console.log("路线查询成功, yin:", this.yin);
+          // 把所有备选路线发给 rider.vue 做拥堵分析
+          eventBus.emit("routes-updated", result.routes);
         } else {
           console.error("骑行路线查询失败:", result);
           eventBus.emit("onSpeck", "路线查询失败，请重新输入目的地");

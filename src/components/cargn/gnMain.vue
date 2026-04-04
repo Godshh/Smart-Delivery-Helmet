@@ -152,8 +152,8 @@ import axios from "axios";
 export default {
   data() {
     return {
-      videoSrc: "http://192.168.99.44:5000/video_feed",
-      raspberryPiIP: "192.168.99.44",
+      videoSrc: "http://10.194.90.44:5000/video_feed",
+      raspberryPiIP: "10.194.90.44",
       trafficLight: "yellow",
       trafficMessage: "未检测到红绿灯",
       trafficLightMap: {
@@ -338,7 +338,7 @@ export default {
         this.distance = 0;
       });
 
-      this.fatigueSocket = io(`http://192.168.99.188:5003`, {
+      this.fatigueSocket = io(`http://10.194.90.44:5003`, {
         reconnection: true,
         reconnectionAttempts: 5,
         reconnectionDelay: 1000,

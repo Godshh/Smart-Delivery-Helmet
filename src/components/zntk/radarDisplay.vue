@@ -5,16 +5,36 @@
       <div class="back-btn" @click="goBack">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M15 18L9 12L15 6" stroke="#2563EB" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </div>
-      <div class="header-center">
-        <div class="helmet-icon">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3C7 3 3 7.5 3 12v3a2 2 0 002 2h14a2 2 0 002-2v-3c0-4.5-4-9-9-9z" stroke="#2563EB" stroke-width="1.8" fill="rgba(37,99,235,0.1)"/><path d="M5 15h14" stroke="#2563EB" stroke-width="1.5"/></svg>
+      <div class="header-left">
+        <div class="radar-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#2563EB" stroke-width="1.8"/><circle cx="12" cy="12" r="5" stroke="#2563EB" stroke-width="1.5" stroke-dasharray="2 2"/><circle cx="12" cy="12" r="2" fill="#2563EB"/><line x1="12" y1="3" x2="12" y2="12" stroke="#2563EB" stroke-width="1.5" stroke-linecap="round"/></svg>
         </div>
-        <div class="title">头盔雷达 · 环境感知</div>
+        <div class="title">雷达感知</div>
+        <div class="conn-status">
+          <span class="status-dot" :class="{ active: isOnline }"></span>
+          <span class="status-text">{{ isOnline ? '在线' : '离线' }}</span>
+        </div>
       </div>
-      <div class="status">
-        <span class="status-dot" :class="{ active: isOnline }"></span>
-        <span class="status-text">{{ isOnline ? '在线' : '离线' }}</span>
-        <span class="fps-badge">{{ fps }} Hz</span>
+      <div class="header-stats">
+        <div class="hstat-item">
+          <span class="hstat-val">{{ fps }}</span>
+          <span class="hstat-label">Hz</span>
+        </div>
+        <div class="hstat-divider"></div>
+        <div class="hstat-item">
+          <span class="hstat-val">{{ numPoints }}</span>
+          <span class="hstat-label">点云</span>
+        </div>
+        <div class="hstat-divider"></div>
+        <div class="hstat-item">
+          <span class="hstat-val">{{ numTracks }}</span>
+          <span class="hstat-label">目标</span>
+        </div>
+        <div class="hstat-divider"></div>
+        <div class="hstat-item">
+          <span class="hstat-val">{{ frameNumber }}</span>
+          <span class="hstat-label">帧号</span>
+        </div>
       </div>
     </div>
 
@@ -22,6 +42,13 @@
       <!-- Three.js 3D 视图 -->
       <div class="canvas-wrap">
         <canvas ref="threeCanvas"></canvas>
+        <!-- 危险距离红色外框警报 -->
+        <div class="danger-border-alert" v-if="tracks.some(t => t.dist < 3)">
+          <div class="alert-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2.5" fill="rgba(239,68,68,0.2)" stroke-linejoin="round"/><path d="M12 9v5M12 16.5v.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+            危险！目标 &lt; 3m
+          </div>
+        </div>
         <div class="hint">拖拽旋转 &nbsp;·&nbsp; 滚轮缩放 &nbsp;·&nbsp; 右键平移</div>
         <div class="frame-stats">
           <span>帧 #{{ frameNumber }}</span>
@@ -63,25 +90,48 @@
           <div class="section-title">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#2563EB" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="#2563EB"/></svg>
             周边目标
+            <span class="track-count" v-if="tracks.length > 0">{{ tracks.length }}</span>
+          </div>
+          <!-- 危险预警横幅 -->
+          <div class="alert-banner danger-banner" v-if="tracks.some(t => t.dist < 3)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2" fill="rgba(239,68,68,0.15)" stroke-linejoin="round"/><path d="M12 9v5M12 16.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            危险！有目标进入 3m 内
+          </div>
+          <div class="alert-banner warn-banner" v-else-if="tracks.some(t => t.dist < 8)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M12 8v5M12 15.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+            注意！有目标在 8m 以内
           </div>
           <div class="track-list">
             <div
-              v-for="t in tracks"
+              v-for="t in tracksSorted"
               :key="t.tid"
               class="track-item"
               :class="[distClass(t.dist), { selected: selectedTid === t.tid }]"
               @click="selectTrack(t.tid)"
             >
-              <div class="track-left">
-                <div class="track-badge" :class="distClass(t.dist)">{{ t.tid }}</div>
-                <div class="track-coords">
-                  <span>{{ t.dist.toFixed(1) }}m</span>
-                  <span>{{ t.azimuth.toFixed(0) }}°</span>
+              <!-- 左：威胁等级色条 -->
+              <div class="threat-bar" :class="distClass(t.dist)"></div>
+              <div class="track-body">
+                <div class="track-top-row">
+                  <div class="track-id-badge" :class="distClass(t.dist)">T{{ t.tid }}</div>
+                  <div class="track-dist" :class="distClass(t.dist)">{{ t.dist.toFixed(1) }}<span>m</span></div>
+                  <div class="track-azimuth-wrap">
+                    <!-- 方位指针 -->
+                    <svg class="azimuth-arrow" width="14" height="14" viewBox="0 0 14 14">
+                      <circle cx="7" cy="7" r="6" stroke="#e2e8f0" stroke-width="1" fill="none"/>
+                      <line :transform="`rotate(${t.azimuth}, 7, 7)`" x1="7" y1="7" x2="7" y2="2" stroke="#2563eb" stroke-width="1.5" stroke-linecap="round"/>
+                    </svg>
+                    <span class="azimuth-text">{{ azimuthLabel(t.azimuth) }}</span>
+                  </div>
                 </div>
-              </div>
-              <div class="track-right">
-                <div class="track-speed">{{ t.speed.toFixed(1) }}<span>m/s</span></div>
-                <div class="track-state" :class="stateColor(t.state)">{{ stateLabel(t.state) }}</div>
+                <div class="track-bottom-row">
+                  <div class="track-speed-row">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M5 12l7-7 7 7M12 5v14" stroke="#64748b" stroke-width="2" stroke-linecap="round"/></svg>
+                    <span>{{ t.speed.toFixed(1) }} m/s</span>
+                  </div>
+                  <div class="track-state-badge" :class="stateColor(t.state)">{{ stateLabel(t.state) }}</div>
+                  <div class="track-conf">{{ (t.confidence * 100).toFixed(0) }}%</div>
+                </div>
               </div>
             </div>
             <div v-if="tracks.length === 0" class="no-data">
@@ -135,32 +185,7 @@
           </div>
         </div>
 
-        <!-- 系统信息 -->
-        <div class="panel-section">
-          <div class="section-title">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" rx="2" stroke="#2563EB" stroke-width="2"/><path d="M8 10h8M8 14h5" stroke="#2563EB" stroke-width="1.5"/></svg>
-            系统状态
-          </div>
-          <div class="sys-grid">
-            <div class="sys-item">
-              <div class="sys-val">{{ fps }}</div>
-              <div class="sys-label">Hz</div>
-            </div>
-            <div class="sys-item">
-              <div class="sys-val">{{ numPoints }}</div>
-              <div class="sys-label">点云</div>
-            </div>
-            <div class="sys-item">
-              <div class="sys-val">{{ numTracks }}</div>
-              <div class="sys-label">目标</div>
-            </div>
-            <div class="sys-item">
-              <div class="sys-val">{{ frameNumber }}</div>
-              <div class="sys-label">帧号</div>
-            </div>
-          </div>
-          <div class="update-time">更新于 {{ lastUpdate }}</div>
-        </div>
+
 
       </div>
     </div>
@@ -226,6 +251,9 @@ export default {
     this._prevT = 0            // renderLoop 上一帧时间戳
   },
   computed: {
+    tracksSorted() {
+      return [...this.tracks].sort((a, b) => a.dist - b.dist)
+    },
     selectedTrack() {
       return this.tracks.find(t => t.tid === this.selectedTid) || null
     },
@@ -402,6 +430,12 @@ export default {
         this._s.remove(this._detectedPersonGroup)
         this._detectedPersonGroup = null
       }
+    },
+
+    azimuthLabel(deg) {
+      // 将方位角转为 8 方向简称
+      const dirs = ['前', '右前', '右', '右后', '后', '左后', '左', '左前']
+      return dirs[Math.round(((deg % 360) + 360) % 360 / 45) % 8]
     },
 
     distClass(dist) {
@@ -912,7 +946,7 @@ export default {
 .header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   padding: 10px 16px;
   background: @bg-panel;
   border-bottom: 1px solid @border;
@@ -926,23 +960,28 @@ export default {
     display: flex; align-items: center; justify-content: center;
     cursor: pointer;
     transition: all 0.15s;
+    flex-shrink: 0;
     &:hover { border-color: @blue; background: rgba(37,99,235,0.05); }
   }
 
-  .header-center {
+  .header-left {
     display: flex; align-items: center; gap: 8px;
+    flex-shrink: 0;
+    .radar-icon {
+      width: 30px; height: 30px; border-radius: 8px;
+      background: rgba(37,99,235,0.08);
+      display: flex; align-items: center; justify-content: center;
+    }
     .title {
       font-size: 16px; font-weight: 700;
-      color: @text; letter-spacing: 1px;
+      color: @text; letter-spacing: 0.5px;
     }
-  }
-
-  .status {
-    display: flex; align-items: center; gap: 6px;
-    font-size: 12px; color: @text-2;
-
+    .conn-status {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 11px; color: @text-3;
+    }
     .status-dot {
-      width: 8px; height: 8px; border-radius: 50%;
+      width: 7px; height: 7px; border-radius: 50%;
       background: @text-3;
       &.active {
         background: @green;
@@ -951,12 +990,28 @@ export default {
       }
     }
     .status-text { font-weight: 500; }
-    .fps-badge {
-      padding: 2px 8px;
-      background: rgba(37,99,235,0.08);
-      color: @blue;
-      border-radius: 100px;
-      font-weight: 600; font-size: 11px;
+  }
+
+  .header-stats {
+    margin-left: auto;
+    display: flex; align-items: center;
+    background: @bg-sec;
+    border: 1px solid @border;
+    border-radius: 10px;
+    padding: 4px 6px;
+    gap: 4px;
+
+    .hstat-item {
+      display: flex; flex-direction: column; align-items: center;
+      padding: 2px 10px;
+      .hstat-val {
+        font-size: 15px; font-weight: 700; color: @blue; line-height: 1.2;
+      }
+      .hstat-label { font-size: 10px; color: @text-3; margin-top: 1px; }
+    }
+
+    .hstat-divider {
+      width: 1px; height: 28px; background: @border;
     }
   }
 }
@@ -973,6 +1028,29 @@ export default {
   flex: 1; position: relative; min-width: 0;
   background: @bg;
   canvas { width: 100% !important; height: 100% !important; display: block; }
+
+  .danger-border-alert {
+    position: absolute; inset: 0;
+    pointer-events: none;
+    border: 4px solid @red;
+    border-radius: 4px;
+    box-shadow: 0 0 0 4px rgba(239,68,68,0.25) inset,
+                0 0 24px 4px rgba(239,68,68,0.35);
+    animation: dangerFrame 0.6s ease-in-out infinite;
+    z-index: 10;
+
+    .alert-label {
+      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(239,68,68,0.9);
+      color: #fff;
+      font-size: 14px; font-weight: 700;
+      padding: 5px 16px; border-radius: 100px;
+      white-space: nowrap;
+      letter-spacing: 0.5px;
+      box-shadow: 0 2px 12px rgba(239,68,68,0.5);
+    }
+  }
 
   .hint {
     position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
@@ -1031,6 +1109,28 @@ export default {
 }
 
 /* 目标列表 */
+.track-count {
+  margin-left: auto;
+  font-size: 10px; font-weight: 600;
+  background: rgba(37,99,235,0.1); color: @blue;
+  padding: 1px 6px; border-radius: 100px;
+}
+
+.alert-banner {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 600;
+  padding: 5px 8px; border-radius: 7px; margin-bottom: 8px;
+  &.danger-banner {
+    background: rgba(239,68,68,0.1); color: @red;
+    border: 1px solid rgba(239,68,68,0.25);
+    animation: dangerBlink 0.8s ease-in-out infinite;
+  }
+  &.warn-banner {
+    background: rgba(249,115,22,0.1); color: @orange;
+    border: 1px solid rgba(249,115,22,0.25);
+  }
+}
+
 .track-list {
   display: flex; flex-direction: column; gap: 5px;
   .no-data {
@@ -1040,43 +1140,84 @@ export default {
 }
 
 .track-item {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 7px 10px;
+  display: flex; align-items: stretch;
   border-radius: 8px;
   border: 1px solid @border;
   background: @bg;
   cursor: pointer;
   transition: all 0.15s;
+  overflow: hidden;
 
   &:hover { border-color: #93c5fd; background: rgba(37,99,235,0.03); }
   &.selected { border-color: @blue; background: rgba(37,99,235,0.06); }
+  &.danger { border-color: rgba(239,68,68,0.4); }
+  &.warning { border-color: rgba(249,115,22,0.4); }
 
-  &.danger { border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.04); }
-  &.warning { border-color: rgba(249,115,22,0.4); background: rgba(249,115,22,0.04); }
+  .threat-bar {
+    width: 4px; flex-shrink: 0;
+    &.safe { background: @blue; }
+    &.warning { background: @orange; }
+    &.danger { background: @red; animation: dangerBlink 0.6s infinite; }
+  }
 
-  .track-left {
-    display: flex; align-items: center; gap: 8px;
-    .track-badge {
-      width: 26px; height: 26px; border-radius: 6px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 11px; font-weight: 700;
-      &.safe { background: rgba(37,99,235,0.12); color: @blue; }
+  .track-body {
+    flex: 1; padding: 7px 9px;
+    display: flex; flex-direction: column; gap: 5px;
+  }
+
+  .track-top-row {
+    display: flex; align-items: center; gap: 7px;
+
+    .track-id-badge {
+      font-size: 10px; font-weight: 700;
+      padding: 1px 6px; border-radius: 5px;
+      &.safe    { background: rgba(37,99,235,0.12);  color: @blue; }
       &.warning { background: rgba(249,115,22,0.15); color: @orange; }
-      &.danger { background: rgba(239,68,68,0.15); color: @red; }
+      &.danger  { background: rgba(239,68,68,0.15);  color: @red; }
     }
-    .track-coords {
-      display: flex; flex-direction: column; gap: 1px;
-      font-size: 11px; color: @text-2; font-family: 'Courier New', monospace;
-      span { display: block; }
+
+    .track-dist {
+      font-size: 16px; font-weight: 800;
+      font-family: 'Courier New', monospace;
+      &.safe    { color: @blue; }
+      &.warning { color: @orange; }
+      &.danger  { color: @red; }
+      span { font-size: 10px; font-weight: 400; color: @text-3; margin-left: 1px; }
+    }
+
+    .track-azimuth-wrap {
+      margin-left: auto;
+      display: flex; align-items: center; gap: 4px;
+      .azimuth-arrow { flex-shrink: 0; }
+      .azimuth-text {
+        font-size: 11px; font-weight: 600; color: @text-2; min-width: 20px; text-align: center;
+      }
     }
   }
-  .track-right {
-    text-align: right;
-    .track-speed {
-      font-size: 15px; font-weight: 700; color: @text;
-      span { font-size: 10px; font-weight: 400; color: @text-3; margin-left: 2px; }
+
+  .track-bottom-row {
+    display: flex; align-items: center; gap: 6px;
+
+    .track-speed-row {
+      display: flex; align-items: center; gap: 3px;
+      font-size: 11px; color: @text-2;
+      font-family: 'Courier New', monospace;
     }
-    .track-state { font-size: 10px; margin-top: 1px; }
+
+    .track-state-badge {
+      font-size: 10px; font-weight: 600;
+      padding: 1px 6px; border-radius: 100px; background: @bg-sec;
+      &.state-move { color: @green; background: rgba(34,197,94,0.1); }
+      &.state-lost { color: @red;   background: rgba(239,68,68,0.1); }
+      &.state-new  { color: @blue;  background: rgba(37,99,235,0.1); }
+      &.state-idle { color: @text-3; }
+    }
+
+    .track-conf {
+      margin-left: auto;
+      font-size: 10px; color: @text-3;
+      font-family: 'Courier New', monospace;
+    }
   }
 }
 
@@ -1124,21 +1265,6 @@ export default {
 .state-lost { color: @red; }
 .state-new  { color: @blue; }
 .state-idle { color: @text-3; }
-
-/* 系统状态 */
-.sys-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
-  .sys-item {
-    text-align: center; padding: 8px 4px;
-    background: @bg-sec; border-radius: 8px;
-    .sys-val { font-size: 18px; font-weight: 700; color: @blue; line-height: 1.2; }
-    .sys-label { font-size: 10px; color: @text-3; margin-top: 2px; }
-  }
-}
-.update-time {
-  font-size: 10px; color: @text-3; text-align: right;
-  margin-top: 6px; font-family: 'Courier New', monospace;
-}
 
 /* ── 底栏 ─────────────────────────── */
 .bottom-bar {
@@ -1191,6 +1317,10 @@ export default {
 
 @keyframes warnBlink  { 0%,100%{opacity:1} 50%{opacity:0.75} }
 @keyframes dangerBlink{ 0%,100%{opacity:1; box-shadow: 0 0 0 0 rgba(239,68,68,0.3)} 50%{opacity:0.85; box-shadow: 0 0 0 5px rgba(239,68,68,0)} }
+@keyframes dangerFrame {
+  0%,100% { border-color: @red; box-shadow: 0 0 0 4px rgba(239,68,68,0.25) inset, 0 0 24px 4px rgba(239,68,68,0.35); }
+  50%     { border-color: rgba(239,68,68,0.5); box-shadow: 0 0 0 4px rgba(239,68,68,0.08) inset, 0 0 40px 8px rgba(239,68,68,0.15); }
+}
 
 /* ── 摄像头识别区域 ──────────────── */
 .cam-section {

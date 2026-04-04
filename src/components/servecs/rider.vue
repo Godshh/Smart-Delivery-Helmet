@@ -1,661 +1,769 @@
 <template>
   <div class="rider-container">
-    <!-- 天气模块 -->
-    <div class="card weather-card">
-      <div class="weather-header">
-        <i class="fas fa-sun"></i>
-        <div class="weather-info">
-          <h3>27°C</h3>
-          <p>晴 / 湿度 45%</p>
+
+    <!-- 顶部状态栏：天气 + 骑行状态合并 -->
+    <div class="card status-card">
+      <div class="status-left">
+        <i class="fas fa-sun weather-icon"></i>
+        <div>
+          <div class="temp">27°C <span class="weather-desc">晴</span></div>
+          <div class="weather-sub">湿度 45% · 路面干燥 · 空气优良</div>
         </div>
       </div>
-      <div class="road-tips">
-        <div class="tip-item">
-          <i class="fas fa-car"></i>
-          <span>路面干燥</span>
+      <div class="status-right">
+        <div class="score-mini">
+          <svg width="52" height="52">
+            <circle cx="26" cy="26" r="20" fill="none" stroke="rgba(255,255,255,0.25)" stroke-width="5"/>
+            <circle cx="26" cy="26" r="20" fill="none"
+              :stroke="getScoreColor(drivingScore)"
+              stroke-width="5"
+              stroke-linecap="round"
+              :stroke-dasharray="`${(drivingScore/100)*125.6} 125.6`"
+              style="transform:rotate(-90deg);transform-origin:50% 50%"/>
+          </svg>
+          <div class="score-mini-text">
+            <span class="score-num">{{ drivingScore }}</span>
+            <span class="score-lbl">评分</span>
+          </div>
         </div>
-        <div class="tip-item">
-          <i class="fas fa-leaf"></i>
-          <span>空气优良</span>
+        <div class="stat-pills">
+          <div class="stat-pill" v-for="item in statsData" :key="item.label">
+            <i :class="item.icon" :style="{ color: item.pillColor }"></i>
+            <span>{{ item.shortValue }}</span>
+          </div>
         </div>
       </div>
     </div>
-    <!-- 模块 -->
+
+    <!-- 路况分析卡 -->
     <div class="card traffic-card">
-      <h2 class="card-title">实时拥堵情况</h2>
-      <div class="traffic-progress">
-        <div class="status-bar" :style="{ width: trafficPercent + '%' }">
-          <i class="fas fa-car-side"></i>
+      <div class="traffic-header">
+        <div class="title-row">
+          <i class="fas fa-route title-icon"></i>
+          <span class="card-title">AI 导航路况分析</span>
+          <span class="update-time">{{ updateTime }}</span>
         </div>
-        <div class="status-labels">
-          <span>畅通</span>
-          <span>缓行</span>
-          <span>拥堵</span>
-        </div>
-      </div>
-      <p class="traffic-desc">
-        <i class="fas fa-info-circle"></i>
-        当前平均时速 {{ trafficSpeed }} km/h
-      </p>
-    </div>
-    
-    <div class="card trip-stats">
-      <!-- 评分环状图 -->
-      <div class="score-ring">
-        <svg width="120" height="120">
-          <circle class="ring-background" cx="60" cy="60" r="50" />
-          <circle
-            class="ring-progress"
-            :style="progressStyle"
-            cx="60"
-            cy="60"
-            r="50"
-          />
-        </svg>
-        <div class="score-content">
-          <div class="main-score">{{ drivingScore }}</div>
-          <div class="score-label">驾驶评分</div>
-        </div>
+        <button v-if="hasRoutes" class="clear-btn" @click="clearRoutes">
+          <i class="fas fa-times"></i>
+        </button>
       </div>
 
-      <!-- 行程详细数据 -->
-      <div class="trip-details">
-        <div
-          class="detail-item"
-          v-for="(item, index) in statsData"
-          :key="index"
-        >
-          <div class="metric">
-            <i class="icon" :class="item.icon"></i>
-            <span>{{ item.label }}</span>
-          </div>
-          <div class="value">{{ item.value }}</div>
-        </div>
+      <!-- 无路线占位 -->
+      <div v-if="!hasRoutes" class="no-route-tip">
+        <div class="no-route-icon"><i class="fas fa-map-marked-alt"></i></div>
+        <span class="no-route-text">在地图中规划路线后<br>即可查看路况分析</span>
       </div>
+
+      <template v-else>
+        <!-- 路线 tab -->
+        <div class="route-tabs" v-if="routeOptions.length > 1">
+          <div
+            v-for="(r, i) in routeOptions"
+            :key="i"
+            class="route-tab"
+            :class="{ active: selectedRoute === i, best: r.isBest }"
+            @click="selectedRoute = i"
+          >
+            <div class="tab-badges">
+              <span class="tab-best" v-if="r.isBest"><i class="fas fa-star"></i> 最优</span>
+              <span class="tab-save" v-if="r.saveMin > 0">省{{ r.saveMin }}分钟</span>
+            </div>
+            <span class="tab-time">{{ r.timeText }}</span>
+            <div class="tab-bottom">
+              <span class="tab-dist">{{ r.distanceText }}</span>
+              <span class="tab-cong" :style="{ color: r.congestion.color }">{{ r.congestion.label }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 推荐理由横幅（仅最优路线显示） -->
+        <div class="recommend-banner" v-if="currentRoute && currentRoute.isBest">
+          <i class="fas fa-lightbulb"></i>
+          <span>{{ currentRoute.recommendReason }}</span>
+        </div>
+
+        <!-- 总览数据行 -->
+        <div class="overview-row" v-if="currentRoute">
+          <div class="ov-chip" v-for="ov in overviewChips" :key="ov.label">
+            <i :class="ov.icon" :style="{ color: ov.color }"></i>
+            <div class="ov-info">
+              <span class="ov-val">{{ ov.value }}</span>
+              <span class="ov-lbl">{{ ov.label }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 整体拥堵条 -->
+        <div class="gradient-bar-wrap" v-if="currentRoute">
+          <div class="bar-label-row">
+            <span class="bar-label-text">整体路况</span>
+            <span class="bar-label-status" :style="{ color: currentRoute.congestion.color }">
+              {{ currentRoute.congestion.label }}
+              <span class="bar-pct">{{ Math.round(currentRoute.congestion.pct) }}%</span>
+            </span>
+          </div>
+          <div class="gradient-bar">
+            <div class="bar-marker" :style="{ left: clampedPct + '%' }">
+              <i class="fas fa-bicycle"></i>
+            </div>
+          </div>
+          <div class="bar-ticks">
+            <span>畅通</span><span>缓行</span><span>拥堵</span><span>严重</span>
+          </div>
+        </div>
+
+        <!-- 路段列表 -->
+        <div class="road-list-header">
+          <span>路段详情</span>
+          <span class="seg-count">共 {{ currentRoute.segments.length }} 段</span>
+        </div>
+        <div class="road-list">
+          <div v-for="(seg, i) in currentRoute.segments" :key="i" class="road-item">
+            <div class="seg-left">
+              <span class="seg-idx" :style="{ background: seg.color + '20', color: seg.color }">{{ i + 1 }}</span>
+              <div class="seg-line" :style="{ background: i < currentRoute.segments.length - 1 ? seg.color + '40' : 'transparent' }"></div>
+            </div>
+            <div class="seg-body">
+              <div class="seg-top-row">
+                <div class="seg-name-row">
+                  <i :class="seg.icon" class="seg-dir-icon"></i>
+                  <span class="road-name">{{ seg.name }}</span>
+                </div>
+                <span class="road-status-badge" :style="{ background: seg.color + '18', color: seg.color, borderColor: seg.color + '60' }">{{ seg.status }}</span>
+              </div>
+              <div class="seg-bottom-row">
+                <div class="road-mini-bar">
+                  <div class="road-mini-fill" :style="{ width: seg.pct + '%', background: seg.color }"></div>
+                </div>
+                <span class="road-dist">{{ seg.distText }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
+
   </div>
 </template>
-  
-  <script>
+
+<script>
+import eventBus from "@/eventBus.js";
 export default {
   props: {
-    score: { type: Number, default: 87 }, // 驾驶评分 (0-100)
-    suddenAcceleration: { type: Number, default: 2 }, // 急加速次数
-    hardBraking: { type: Number, default: 1 }, // 急刹车次数
-    fuelConsumption: { type: Number, default: 7.2 }, // 油耗(L/100km)
-    distance: { type: Number, default: 38.5 }, // 本次里程(km)
-    duration: { type: Number, default: 72 }, // 行程时间(分钟)
+    score:             { type: Number, default: 87 },
+    suddenAcceleration:{ type: Number, default: 2  },
+    hardBraking:       { type: Number, default: 1  },
+    fuelConsumption:   { type: Number, default: 7.2},
+    distance:          { type: Number, default: 38.5},
+    duration:          { type: Number, default: 72 },
   },
   data() {
     return {
-      isSpeaking: false,
-      emergencyStatus: false,
-      showTransfer: false,
-      currentOrders: [
-        {
-          id: 1001,
-          address: "北京市朝阳区光华路8号世贸天阶B1层美食广场12号档口",
-          deadline: Date.now() + 25 * 60 * 1000, // 25分钟后超时
-          price: 8.5,
-        },
-        // 其他订单数据...
-      ],
-      selectedOrders: [],
-      suitableRiders: [
-        {
-          id: 1,
-          name: "张三",
-          distance: 1.2,
-          capacity: 2,
-          avatar: "https://i.pravatar.cc/40?img=1",
-          position: { lat: 39.91, lng: 116.4 },
-        },
-        {
-          id: 2,
-          name: "李四",
-          distance: 0.8,
-          capacity: 1,
-          avatar: "https://i.pravatar.cc/40?img=2",
-          position: { lat: 39.92, lng: 116.41 },
-        },
-      ],
-    };
+      updateTime: '',
+      rawRoutes: [],
+      selectedRoute: 0,
+    }
   },
   computed: {
-    drivingScore() {
-      return Math.min(Math.max(this.score, 0), 100);
+    hasRoutes() {
+      return this.rawRoutes.length > 0
     },
-    progressStyle() {
-      return {
-        strokeDasharray: `${(this.drivingScore / 100) * 314}, 314`,
-        stroke: this.getScoreColor(this.drivingScore),
-      };
+    routeOptions() {
+      if (!this.rawRoutes.length) return []
+      const minTime = Math.min(...this.rawRoutes.map(r => r.time))
+      const maxTime = Math.max(...this.rawRoutes.map(r => r.time))
+      const now = new Date()
+      return this.rawRoutes.map((route, i) => {
+        const avgSpeed = route.distance / route.time * 3.6
+        const pct = this.speedToPct(avgSpeed)
+        const congestion = this.pctToLevel(pct)
+        const isBest = route.time === minTime
+        const saveMin = Math.round((maxTime - route.time) / 60)
+        // 预计到达时间
+        const arriveDate = new Date(now.getTime() + route.time * 1000)
+        const arriveTime = `${arriveDate.getHours().toString().padStart(2,'0')}:${arriveDate.getMinutes().toString().padStart(2,'0')}`
+        // 拥堵路段统计
+        const segsAll = (route.rides || [])
+        const jamSegs = segsAll.filter(r => {
+          const d = r.distance || 0; const spd = d / Math.max(r.time || 1, 1) * 3.6
+          return this.speedToPct(spd) >= 65
+        }).length
+        const smoothSegs = segsAll.filter(r => {
+          const d = r.distance || 0; const spd = d / Math.max(r.time || 1, 1) * 3.6
+          return this.speedToPct(spd) < 30
+        }).length
+        // 推荐理由
+        let recommendReason = ''
+        if (isBest) {
+          if (jamSegs === 0 && pct < 40) recommendReason = '全程路况畅通，是当前最优骑行路线'
+          else if (jamSegs === 0) recommendReason = `无拥堵路段，比其他路线快 ${saveMin > 0 ? saveMin+'分钟' : '最多时间'}`
+          else if (jamSegs <= 1) recommendReason = `仅 ${jamSegs} 个拥堵路段，综合耗时最短`
+          else recommendReason = `多路线对比后耗时最短，共 ${jamSegs} 段拥堵`
+        }
+        const segments = segsAll.slice(0, 6).map((ride) => {
+          const d = ride.distance || 0
+          const spd = d / Math.max(ride.time || 1, 1) * 3.6
+          const sp = this.speedToPct(spd)
+          const lv = this.pctToLevel(sp)
+          const icon = this.getSegIcon(ride.instruction || '')
+          return {
+            name: this.shortenRoadName(ride.road || ride.instruction || '未知路段'),
+            pct: sp,
+            status: lv.label,
+            color: lv.color,
+            icon,
+            distText: d >= 1000 ? (d/1000).toFixed(1)+'km' : Math.round(d)+'m',
+          }
+        })
+        return {
+          isBest,
+          saveMin,
+          arriveTime,
+          jamSegs,
+          smoothSegs,
+          distanceText: (route.distance/1000).toFixed(1)+' km',
+          timeText: Math.round(route.time/60)+' 分钟',
+          avgSpeed: avgSpeed.toFixed(0),
+          congestion: { ...congestion, pct },
+          recommendReason,
+          segments,
+        }
+      })
+    },
+    currentRoute() {
+      return this.routeOptions[this.selectedRoute] || null
+    },
+    clampedPct() {
+      if (!this.currentRoute) return 0
+      return Math.min(93, Math.max(4, this.currentRoute.congestion.pct))
+    },
+    overviewChips() {
+      if (!this.currentRoute) return []
+      return [
+        { icon: 'fas fa-road',           color: '#4a7fe5', value: this.currentRoute.distanceText,          label: '全程距离' },
+        { icon: 'fas fa-clock',          color: '#f39c12', value: this.currentRoute.timeText,              label: '预计用时' },
+        { icon: 'fas fa-flag-checkered', color: '#2ecc71', value: this.currentRoute.arriveTime,            label: '到达时间' },
+        { icon: 'fas fa-tachometer-alt', color: '#9b59b6', value: this.currentRoute.avgSpeed+' km/h',      label: '平均速度' },
+      ]
+    },
+    drivingScore() {
+      return Math.min(Math.max(this.score, 0), 100)
     },
     statsData() {
       return [
-        {
-          label: "急加速",
-          value: `${this.suddenAcceleration}次`,
-          icon: "fas fa-rocket",
-          color: "#e74c3c",
-        },
-        {
-          label: "急刹车",
-          value: `${this.hardBraking}次`,
-          icon: "fas fa-car-crash",
-          color: "#f1c40f",
-        },
-        {
-          label: "平均油耗",
-          value: `${this.fuelConsumption}L/100km`,
-          icon: "fas fa-gas-pump",
-          color: "#2ecc71",
-        },
-        {
-          label: "行驶里程",
-          value: `${this.distance}km`,
-          icon: "fas fa-road",
-          color: "#3498db",
-        },
-      ];
+        { label:'急加速', shortValue:`${this.suddenAcceleration}次`, icon:'fas fa-rocket',    pillColor:'#e74c3c' },
+        { label:'急刹车', shortValue:`${this.hardBraking}次`,        icon:'fas fa-car-crash', pillColor:'#f39c12' },
+        { label:'油耗',   shortValue:`${this.fuelConsumption}L`,     icon:'fas fa-gas-pump',  pillColor:'#2ecc71' },
+        { label:'里程',   shortValue:`${this.distance}km`,           icon:'fas fa-road',      pillColor:'#3498db' },
+      ]
     },
+  },
+  mounted() {
+    this.refreshTime()
+    eventBus.on('routes-updated', this.onRoutesUpdated)
+  },
+  beforeUnmount() {
+    eventBus.off('routes-updated', this.onRoutesUpdated)
   },
   methods: {
-    getScoreColor(score) {
-      if (score >= 90) return "#2ecc71";
-      if (score >= 70) return "#f1c40f";
-      return "#e74c3c";
+    onRoutesUpdated(routes) {
+      this.rawRoutes = routes
+      let bestIdx = 0, minTime = Infinity
+      routes.forEach((r, i) => { if (r.time < minTime) { minTime = r.time; bestIdx = i } })
+      this.selectedRoute = bestIdx
+      this.refreshTime()
     },
-    startVoice() {
-      this.isSpeaking = true;
-      navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-        // 开启语音传输
-      });
+    clearRoutes() {
+      this.rawRoutes = []
+      this.selectedRoute = 0
     },
-    stopVoice() {
-      this.isSpeaking = false;
-      // 停止录音并发送
+    speedToPct(kmh) {
+      const pct = Math.round((1 - Math.min(kmh, 22) / 22) * 100)
+      return Math.max(0, Math.min(100, pct))
     },
-    handleOrderTransfer() {
-      this.loadSuitableRiders();
-      this.showTransfer = true;
+    pctToLevel(p) {
+      if (p < 30) return { label:'畅通',   color:'#4CAF50' }
+      if (p < 50) return { label:'较畅通', color:'#8BC34A' }
+      if (p < 65) return { label:'缓行',   color:'#FF9800' }
+      if (p < 80) return { label:'拥堵',   color:'#F44336' }
+      return               { label:'严重拥堵',color:'#B71C1C' }
     },
-    showDispatchPanel() {
-      // 显示智能调度面板
-      this.$emit("dispatch-request", {
-        type: "REINFORCE",
-        position: this.currentPosition,
-      });
+    shortenRoadName(name) {
+      const clean = name.replace(/请|沿|行驶.*|转入|进入|到达.*/g, '').trim()
+      return clean.length > 7 ? clean.slice(0, 7) : clean || '未知路段'
     },
-    triggerEmergency() {
-      this.emergencyStatus = true;
-      // 自动发送定位信息
-      navigator.geolocation.getCurrentPosition((pos) => {
-        this.$emit("emergency", {
-          code: 911,
-          coordinates: pos.coords,
-        });
-        // 启动30秒倒计时
-        setTimeout(() => {
-          this.emergencyStatus = false;
-        }, 30000);
-      });
+    getSegIcon(instruction) {
+      if (/右转|右/.test(instruction)) return 'fas fa-turn-right'
+      if (/左转|左/.test(instruction)) return 'fas fa-turn-left'
+      if (/直行|沿/.test(instruction)) return 'fas fa-arrow-up'
+      if (/到达|目的地/.test(instruction)) return 'fas fa-map-marker-alt'
+      if (/掉头/.test(instruction)) return 'fas fa-undo'
+      return 'fas fa-arrow-up'
     },
-    // 打开接力弹窗
-    openTransfer() {
-      this.loadSuitableRiders();
-      this.showTransfer = true;
+    refreshTime() {
+      const now = new Date()
+      this.updateTime = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`
     },
-
-    // 加载可用骑手
-    async loadSuitableRiders() {
-      // 模拟加载延迟
-      return new Promise((resolve) => {
-        setTimeout(() => {
-          // 数据已经写死在 data 中，无需再获取
-          resolve();
-        }, 500);
-      });
-    },
-    // 订单选择逻辑
-    toggleOrder(orderId) {
-      const index = this.selectedOrders.indexOf(orderId);
-      if (index > -1) {
-        this.selectedOrders.splice(index, 1);
-      } else if (this.selectedOrders.length < 3) {
-        this.selectedOrders.push(orderId);
-      }
-    },
-    // 确认转移
-    async confirmTransfer(riderId) {
-      // 模拟转移延迟
-      setTimeout(() => {
-        const rider = this.suitableRiders.find((r) => r.id === riderId);
-        alert("订单已成功转移给：" + rider.name);
-        this.showTransfer = false;
-        this.selectedOrders = [];
-      }, 500);
-    },
-    shortenAddress(address) {
-      return address.length > 16 ? address.slice(0, 16) + "…" : address;
-    },
-    countdown(deadline) {
-      const diff = Math.max(0, deadline - Date.now());
-      const min = Math.floor(diff / 60000);
-      const sec = Math.floor((diff % 60000) / 1000);
-      return `${min}分${sec}秒`;
-    },
-    isSelected(orderId) {
-      return this.selectedOrders.includes(orderId);
-    },
-    showNavigation(position) {
-      alert(`模拟导航至：(${position.lat}, ${position.lng})`);
+    getScoreColor(s) {
+      if (s >= 90) return '#2ecc71'
+      if (s >= 70) return '#f39c12'
+      return '#e74c3c'
     },
   },
-};
+}
 </script>
-  
+
 <style scoped>
+/* ── 容器 ── */
 .rider-container {
   width: 100%;
   height: 100vh;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  position: relative;
+  align-items: center;
+  padding: 14px 0 24px;
+  background: #f0f2f6;
   border-radius: 15px;
-  background-color: #f8f9fa;
-  margin-top: 14px;
-  align-items: center;
+  box-sizing: border-box;
 }
-/* 天气模块 */
-/* 统一卡片样式 */
+
+/* ── 通用卡片 ── */
 .card {
-  background: white;
-  border-radius: 18px;
-  padding: 20px;
-  width: 90%;
-  margin-bottom: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transition: transform 0.2s ease;
+  width: 92%;
+  background: #fff;
+  border-radius: 20px;
+  padding: 18px 20px;
+  margin-bottom: 14px;
+  box-shadow: 0 2px 16px rgba(0,0,0,0.07);
 }
 
-.card:active {
-  transform: scale(0.98);
-}
-.weather-card {
-  background: linear-gradient(135deg, #6b8dd6, #8eaafb);
-  color: white;
-}
-
-.weather-header {
+/* ── 状态卡（天气 + 评分）── */
+.status-card {
+  background: linear-gradient(135deg, #4a7fe5, #7aa3f5);
+  color: #fff;
   display: flex;
   align-items: center;
-  margin-bottom: 15px;
-}
-
-.weather-header i {
-  font-size: 40px;
-  margin-right: 15px;
-}
-
-.weather-info h3 {
-  margin: 0;
-  font-size: 28px;
-  font-weight: 700;
-}
-
-.weather-info p {
-  margin: 4px 0 0;
-  opacity: 0.9;
-}
-
-.road-tips {
-  display: flex;
-  gap: 15px;
-}
-
-.tip-item {
-  display: flex;
-  align-items: center;
-  background: rgba(255, 255, 255, 0.15);
-  padding: 8px 12px;
-  border-radius: 8px;
-}
-
-.tip-item i {
-  margin-right: 6px;
-  font-size: 14px;
-}
-
-/* 路况模块 */
-.traffic-card {
-  background: #ffffff;
-}
-
-.card-title {
-  margin: 0 0 15px;
-  color: #2f343d;
-  font-size: 18px;
-}
-
-.traffic-progress {
-  height: 36px;
-  background: #f0f2f5;
-  border-radius: 20px;
-  position: relative;
-  margin-bottom: 12px;
-}
-
-.status-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #00c853, #64dd17);
-  border-radius: 20px;
-  position: relative;
-  transition: width 0.5s ease;
-}
-
-.status-bar i {
-  position: absolute;
-  right: -12px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: white;
-  padding: 6px;
-  border-radius: 50%;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
-}
-
-.status-labels {
-  display: flex;
   justify-content: space-between;
-  margin-top: 8px;
-  color: #87909c;
-  font-size: 12px;
-}
-
-.traffic-desc {
-  margin: 30px 0 0;
-  color: #52575c;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-}
-
-.traffic-desc i {
-  margin-right: 8px;
-  color: #2196f3;
-}
-
-/* /// */
-.trip-stats {
-  padding: 20px;
-  background: #f8f9fa;
-  display: flex;
-  gap: 24px;
-}
-
-.score-ring {
-  position: relative;
-  width: 120px;
-  height: 120px;
-}
-
-.ring-background {
-  fill: none;
-  stroke: #eceff1;
-  stroke-width: 8;
-}
-
-.ring-progress {
-  fill: none;
-  stroke-width: 8;
-  stroke-linecap: round;
-  transform: rotate(-90deg);
-  transform-origin: 50% 50%;
-  transition: all 1s ease-out;
-}
-
-.score-content {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  text-align: center;
-}
-
-.main-score {
-  font-size: 28px;
-  font-weight: 700;
-  color: #2c3e50;
-  line-height: 1;
-}
-
-.score-label {
-  font-size: 12px;
-  color: #95a5a6;
-  margin-top: 4px;
-}
-
-.trip-details {
-  flex: 1;
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
 }
 
-.detail-item {
-  background: white;
-  padding: 12px;
-  border-radius: 8px;
+.status-left {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
+  gap: 14px;
+  flex: 1;
+}
+.weather-icon {
+  font-size: 38px;
+  opacity: 0.95;
+}
+.temp {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.weather-desc {
+  font-size: 14px;
+  font-weight: 400;
+  opacity: 0.85;
+}
+.weather-sub {
+  font-size: 11px;
+  opacity: 0.75;
+  margin-top: 3px;
 }
 
-.metric {
+.status-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+.score-mini {
+  position: relative;
+  width: 52px;
+  height: 52px;
+}
+.score-mini-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.score-num {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+.score-lbl {
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+.stat-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  justify-content: flex-end;
+  max-width: 130px;
+}
+.stat-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255,255,255,0.18);
+  border-radius: 20px;
+  padding: 3px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.stat-pill i {
+  font-size: 10px;
+}
+
+/* ── 路况卡 ── */
+.traffic-card {
+  background: #fff;
+  padding: 16px 18px 18px;
+}
+
+.traffic-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.title-icon {
+  font-size: 14px;
+  color: #4a7fe5;
+}
+.card-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a1f2e;
+}
+.update-time {
+  font-size: 10px;
+  color: #bbb;
+  background: #f5f6fa;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.clear-btn {
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: #fff0f0;
+  color: #f44336;
+  border-radius: 50%;
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+}
+.clear-btn:active { background: #ffd6d6; }
+
+/* 占位 */
+.no-route-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 0 18px;
+}
+.no-route-icon {
+  width: 52px; height: 52px;
+  border-radius: 50%;
+  background: #f0f4ff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+  color: #4a7fe5;
+}
+.no-route-text {
+  color: #b0b8c8;
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* 路线 tab */
+.route-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.route-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 10px 6px 8px;
+  border-radius: 14px;
+  border: 1.5px solid #ebedf5;
+  cursor: pointer;
+  background: #fafbfd;
+  transition: all 0.18s;
+  gap: 3px;
+}
+.route-tab.active {
+  border-color: #4a7fe5;
+  background: linear-gradient(135deg, #eef3fd, #f5f8ff);
+  box-shadow: 0 2px 10px rgba(74,127,229,0.15);
+}
+.route-tab.active.best {
+  border-color: #4CAF50;
+  background: linear-gradient(135deg, #edfbf0, #f5fff7);
+  box-shadow: 0 2px 10px rgba(76,175,80,0.15);
+}
+.tab-badges {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-height: 18px;
+}
+.tab-best {
+  font-size: 10px;
+  background: linear-gradient(135deg, #4CAF50, #66bb6a);
+  color: #fff;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.tab-best i { font-size: 8px; margin-right: 2px; }
+.tab-save {
+  font-size: 10px;
+  background: #fff3e0;
+  color: #f57c00;
+  padding: 1px 5px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+.tab-time {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a1f2e;
+  line-height: 1.1;
+}
+.tab-bottom {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.tab-dist { font-size: 10px; color: #999; }
+.tab-cong { font-size: 10px; font-weight: 600; }
+
+/* 推荐理由横幅 */
+.recommend-banner {
   display: flex;
   align-items: center;
   gap: 8px;
+  background: linear-gradient(90deg, #f0f8ff, #e8f5e9);
+  border-left: 3px solid #4CAF50;
+  border-radius: 0 10px 10px 0;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #2e7d32;
+}
+.recommend-banner i {
+  color: #f9a825;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
-.icon {
-  width: 28px;
-  height: 28px;
-  border-radius: 6px;
+/* 总览数据行 */
+.overview-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.ov-chip {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  color: white;
-}
-
-.fa-rocket {
-  background: #e74c3c;
-}
-.fa-car-crash {
-  background: #f1c40f;
-}
-.fa-gas-pump {
-  background: #2ecc71;
-}
-.fa-road {
-  background: #3498db;
-}
-
-.value {
-  font-weight: 600;
-  color: #2c3e50;
-  font-size: 15px;
-}
-
-/* 环状图动画 */
-@keyframes ring-rotate {
-  from {
-    transform: rotate(-90deg) scale(0.9);
-  }
-  to {
-    transform: rotate(-90deg) scale(1);
-  }
-}
-
-.ring-progress {
-  animation: ring-rotate 0.8s ease-out;
-}
-/* /// */
-.transfer-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 999;
-}
-.modal-content {
-  background: white;
-  margin: 1rem;
+  background: #f8f9fc;
   border-radius: 12px;
-  padding: 1rem;
-  max-height: 80vh;
-  overflow-y: auto;
+  padding: 8px 4px 6px;
+  gap: 4px;
 }
-.order-item {
-  padding: 12px;
-  border-bottom: 1px solid #eee;
+.ov-chip i { font-size: 13px; }
+.ov-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+.ov-val {
+  font-size: 12px;
+  font-weight: 700;
+  color: #1a1f2e;
+  line-height: 1;
+}
+.ov-lbl {
+  font-size: 9px;
+  color: #aaa;
+  line-height: 1;
+}
+
+/* 渐变条 */
+.gradient-bar-wrap { margin-bottom: 14px; }
+.bar-label-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 6px;
 }
-.order-item.selected {
-  background: #f0f9eb;
-  border-left: 4px solid #67c23a;
+.bar-label-text { font-size: 12px; color: #888; }
+.bar-label-status { font-size: 12px; font-weight: 700; display: flex; align-items: center; gap: 4px; }
+.bar-pct { font-size: 10px; opacity: 0.7; font-weight: 400; }
+.gradient-bar {
+  height: 10px;
+  border-radius: 5px;
+  background: linear-gradient(90deg,#4CAF50 0%,#8BC34A 25%,#FF9800 55%,#F44336 80%,#B71C1C 100%);
+  position: relative;
 }
-.recommend-riders {
-  margin-top: 1rem;
-  border-top: 1px solid #eee;
-  padding-top: 1rem;
-}
-.rider-option {
-  display: flex;
-  align-items: center;
-  padding: 8px;
-  margin: 8px 0;
-  border-radius: 8px;
-  background: #f8f9fa;
-}
-.avatar {
-  width: 40px;
-  height: 40px;
+.bar-marker {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: #fff;
   border-radius: 50%;
-  margin-right: 12px;
+  width: 22px; height: 22px;
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.22);
+  transition: left 0.6s ease;
+  font-size: 9px;
+  color: #333;
 }
-.nav-btn {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: #409eff;
-}
-/* ?/ */
-.action-group {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 1rem;
-  padding: 1rem;
-  width: 90%;
-  background: #f8f9fa;
-  border-radius: 16px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+.bar-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 9px;
+  color: #ccc;
 }
 
-.action-item {
+/* 路段列表 */
+.road-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.road-list-header span { font-size: 12px; font-weight: 600; color: #888; }
+.seg-count { font-size: 11px; color: #bbb; background: #f5f6fa; padding: 1px 7px; border-radius: 8px; }
+
+.road-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+.road-item {
+  display: flex;
+  gap: 8px;
+  padding: 6px 0;
+}
+.seg-left {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  width: 22px;
+}
+.seg-idx {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.seg-line {
+  width: 2px;
+  flex: 1;
+  min-height: 8px;
+  border-radius: 1px;
+  margin-top: 3px;
+}
+.seg-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-bottom: 4px;
+}
+.seg-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.seg-name-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+.seg-dir-icon {
+  font-size: 10px;
+  color: #4a7fe5;
+  flex-shrink: 0;
+  width: 12px;
   text-align: center;
 }
-
-.action-btn {
-  width: 56px;
-  height: 56px;
-  border: none;
-  border-radius: 50%;
-  margin: 0 auto 8px;
-  transition: all 0.2s ease;
+.road-name {
+  font-size: 13px;
+  color: #2c3e50;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.road-status-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 8px;
+  border: 1px solid;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.seg-bottom-row {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
 }
-
-.action-btn.voice {
-  background: #00a876;
-  box-shadow: 0 4px 12px rgba(0, 168, 118, 0.3);
+.road-mini-bar {
+  flex: 1;
+  height: 5px;
+  background: #f0f0f0;
+  border-radius: 3px;
+  overflow: hidden;
 }
-.action-btn.voice.speaking {
-  animation: pulse 1.5s infinite;
+.road-mini-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.5s ease;
 }
-
-.action-btn.transfer {
-  background: #2196f3;
-  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
-}
-
-.action-btn.dispatch {
-  background: #ff9800;
-  box-shadow: 0 4px 12px rgba(255, 152, 0, 0.3);
-}
-
-.action-btn.emergency {
-  background: #ff5252;
-  box-shadow: 0 4px 12px rgba(255, 82, 82, 0.3);
-}
-
-.action-btn.emergency.active {
-  animation: emergency-pulse 1s infinite;
-}
-
-.icon {
-  width: 24px;
-  height: 24px;
-  fill: white;
-}
-
-.action-label {
-  font-size: 12px;
-  color: #666;
-  font-weight: 500;
-}
-
-@keyframes pulse {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.1);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes emergency-pulse {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-  100% {
-    opacity: 1;
-  }
-}
-
-@media (max-width: 375px) {
-  .action-btn {
-    width: 48px;
-    height: 48px;
-  }
-  .icon {
-    width: 20px;
-    height: 20px;
-  }
+.road-dist {
+  font-size: 10px;
+  color: #bbb;
+  white-space: nowrap;
+  width: 30px;
+  text-align: right;
+  flex-shrink: 0;
 }
 </style>
-  
