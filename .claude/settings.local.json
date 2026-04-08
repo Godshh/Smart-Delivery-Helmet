@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node -e \"const fs=require\\('fs'\\); const s=fs.readFileSync\\('src/components/zntk/radarDisplay.vue','utf8'\\); console.log\\('lines:',s.split\\('\\\\n'\\).length\\); console.log\\('warnModules found:', s.includes\\('warnModules'\\)\\); console.log\\('activeWarnCount found:', s.includes\\('activeWarnCount'\\)\\); console.log\\('warn-grid found:', s.includes\\('warn-grid'\\)\\); console.log\\('cardDangerBlink found:', s.includes\\('cardDangerBlink'\\)\\);\")",
+      "Bash(grep -l \"flex\\\\|grid\\\\|双栏\\\\|两栏\\\\|左右\" \"d:\\\\study\\\\10-17\\\\xtk\\\\src\\\\components\\\\zntk\"/*.vue)",
+      "Bash(find \"d:\\\\study\\\\10-17\\\\xtk\\\\src\" -name \"*.vue\" -exec grep -l \"grid\\\\|flex.*row\" {} \\\\;)"
+    ]
+  }
+}

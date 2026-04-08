@@ -42,11 +42,46 @@
       <!-- Three.js 3D 视图 -->
       <div class="canvas-wrap">
         <canvas ref="threeCanvas"></canvas>
+
+        <!-- 摄像头展开全屏（已移至地图页面） -->
+
         <!-- 危险距离红色外框警报 -->
         <div class="danger-border-alert" v-if="tracks.some(t => t.dist < 3)">
           <div class="alert-label">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2.5" fill="rgba(239,68,68,0.2)" stroke-linejoin="round"/><path d="M12 9v5M12 16.5v.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
             危险！目标 &lt; 3m
+          </div>
+        </div>
+
+        <!-- 预警浮层（左下角，不遮挡画面） -->
+        <div class="canvas-warn-overlay">
+          <!-- 有触发：显示各条预警pills -->
+          <template v-if="activeWarnCount > 0">
+            <template v-for="(mod, key) in warnModules" :key="key">
+              <div
+                v-if="mod && mod.level !== 'safe'"
+                class="cwarn-pill"
+                :class="mod.level"
+              >
+                <svg v-if="key==='fcw'" width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 4l8 14H4L12 4z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
+                <svg v-else-if="key==='rcw'" width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 20l8-14H4L12 20z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
+                <svg v-else-if="key==='bsd'" width="10" height="10" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.5"/></svg>
+                <svg v-else-if="key==='lcw'" width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M4 12h16M12 4v16" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+                <svg v-else-if="key==='lca'" width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M6 12l6-6 6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                <svg v-else-if="key==='pcw'" width="10" height="10" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="7" r="3" stroke="currentColor" stroke-width="2.5"/><path d="M5 20c0-4 3.1-7 7-7s7 3 7 7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+                <svg v-else width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
+                <span class="cwarn-name">{{ warnNameMap[key] }}</span>
+                <span class="cwarn-data" v-if="mod.dist && mod.dist !== '--'">{{ mod.dist }}m</span>
+                <span class="cwarn-data" v-else-if="mod.ttc && mod.ttc !== '--'">TTC {{ mod.ttc }}s</span>
+                <span class="cwarn-data" v-else-if="mod.speed && mod.speed !== '--'">{{ mod.speed }}m/s</span>
+                <span class="cwarn-data" v-else-if="mod.side">{{ mod.side }}侧</span>
+              </div>
+            </template>
+          </template>
+          <!-- 全安全：只显示一个绿点 -->
+          <div class="cwarn-safe-dot" v-else>
+            <span class="safe-pulse"></span>
+            <span>安全</span>
           </div>
         </div>
         <div class="hint">拖拽旋转 &nbsp;·&nbsp; 滚轮缩放 &nbsp;·&nbsp; 右键平移</div>
@@ -58,48 +93,44 @@
         </div>
       </div>
 
-      <!-- 右侧信息面板 -->
+      <!-- 右侧信息面板（摄像头 / 预警格 / 目标列表 / 底部详情浮层） -->
       <div class="info-panel">
 
-        <!-- 摄像头 + 实时识别 -->
-        <div class="panel-section cam-section">
-          <div class="section-title">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="#2563EB" stroke-width="2"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" stroke="#2563EB" stroke-width="2" stroke-linecap="round"/></svg>
-            摄像头识别
-            <span class="cam-status" :class="{ active: camActive }">{{ camActive ? '识别中' : '未开启' }}</span>
-          </div>
-          <div class="cam-wrap">
+        <!-- ① 摄像头（面板内嵌，双击展开覆盖3D画布） -->
+        <div class="panel-section cam-panel">
+          <div class="cam-pip" :class="{ active: camActive }" @dblclick="expandCamToMap">
             <video ref="camVideo" autoplay playsinline muted></video>
             <canvas ref="camCanvas"></canvas>
-            <div v-if="!camActive" class="cam-placeholder" @click="startCamera">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><rect x="2" y="6" width="20" height="14" rx="2" stroke="#94a3b8" stroke-width="1.8"/><circle cx="12" cy="13" r="3.5" stroke="#94a3b8" stroke-width="1.8"/><path d="M8 6l1.5-2h5L16 6" stroke="#94a3b8" stroke-width="1.5"/></svg>
+            <div v-if="!camActive" class="cam-pip-placeholder" @click="startCamera">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="2" y="6" width="20" height="14" rx="2" stroke="#94a3b8" stroke-width="1.8"/><circle cx="12" cy="13" r="3.5" stroke="#94a3b8" stroke-width="1.8"/><path d="M8 6l1.5-2h5L16 6" stroke="#94a3b8" stroke-width="1.5"/></svg>
               <span>点击开启摄像头</span>
             </div>
-            <div v-if="modelLoading" class="cam-loading">
-              <span>加载模型中…</span>
+            <div v-if="modelLoading" class="cam-pip-loading"><span>加载中…</span></div>
+            <div class="cam-pip-tags" v-if="camDetections.length">
+              <span v-for="d in camDetections" :key="d.class" class="pip-tag">{{ labelCN(d.class) }} {{ (d.score*100).toFixed(0) }}%</span>
             </div>
+            <div class="cam-pip-badge" :class="{ active: camActive }">
+              <span class="pip-dot"></span>{{ camActive ? '识别中' : '未开启' }}
+            </div>
+            <!-- 双击提示 -->
+            <div class="cam-pip-hint" v-if="camActive">双击覆盖地图</div>
           </div>
-          <div class="detection-tags" v-if="camDetections.length">
-            <span v-for="d in camDetections" :key="d.class" class="det-tag">{{ labelCN(d.class) }} {{ (d.score*100).toFixed(0) }}%</span>
-          </div>
-          <div v-if="camActive && camDetections.length === 0" class="cam-hint">未检测到桌椅</div>
         </div>
 
-        <!-- 目标列表 -->
-        <div class="panel-section">
+        <!-- ② 目标列表 -->
+        <div class="panel-section panel-track-section">
           <div class="section-title">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#2563EB" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="#2563EB"/></svg>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#2563EB" stroke-width="2"/><circle cx="12" cy="12" r="3" fill="#2563EB"/></svg>
             周边目标
             <span class="track-count" v-if="tracks.length > 0">{{ tracks.length }}</span>
           </div>
-          <!-- 危险预警横幅 -->
           <div class="alert-banner danger-banner" v-if="tracks.some(t => t.dist < 3)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2" fill="rgba(239,68,68,0.15)" stroke-linejoin="round"/><path d="M12 9v5M12 16.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            危险！有目标进入 3m 内
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2" fill="rgba(239,68,68,0.15)" stroke-linejoin="round"/></svg>
+            危险！目标 &lt; 3m
           </div>
           <div class="alert-banner warn-banner" v-else-if="tracks.some(t => t.dist < 8)">
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/><path d="M12 8v5M12 15.5v.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            注意！有目标在 8m 以内
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/></svg>
+            注意！&lt; 8m
           </div>
           <div class="track-list">
             <div
@@ -109,15 +140,13 @@
               :class="[distClass(t.dist), { selected: selectedTid === t.tid }]"
               @click="selectTrack(t.tid)"
             >
-              <!-- 左：威胁等级色条 -->
               <div class="threat-bar" :class="distClass(t.dist)"></div>
               <div class="track-body">
                 <div class="track-top-row">
                   <div class="track-id-badge" :class="distClass(t.dist)">T{{ t.tid }}</div>
                   <div class="track-dist" :class="distClass(t.dist)">{{ t.dist.toFixed(1) }}<span>m</span></div>
                   <div class="track-azimuth-wrap">
-                    <!-- 方位指针 -->
-                    <svg class="azimuth-arrow" width="14" height="14" viewBox="0 0 14 14">
+                    <svg class="azimuth-arrow" width="12" height="12" viewBox="0 0 14 14">
                       <circle cx="7" cy="7" r="6" stroke="#e2e8f0" stroke-width="1" fill="none"/>
                       <line :transform="`rotate(${t.azimuth}, 7, 7)`" x1="7" y1="7" x2="7" y2="2" stroke="#2563eb" stroke-width="1.5" stroke-linecap="round"/>
                     </svg>
@@ -125,67 +154,45 @@
                   </div>
                 </div>
                 <div class="track-bottom-row">
-                  <div class="track-speed-row">
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M5 12l7-7 7 7M12 5v14" stroke="#64748b" stroke-width="2" stroke-linecap="round"/></svg>
-                    <span>{{ t.speed.toFixed(1) }} m/s</span>
-                  </div>
+                  <span class="track-speed-row">{{ t.speed.toFixed(1) }}m/s</span>
                   <div class="track-state-badge" :class="stateColor(t.state)">{{ stateLabel(t.state) }}</div>
-                  <div class="track-conf">{{ (t.confidence * 100).toFixed(0) }}%</div>
                 </div>
               </div>
             </div>
             <div v-if="tracks.length === 0" class="no-data">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="3 3"/></svg>
-              <span>暂无探测目标</span>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="#CBD5E1" stroke-width="1.5" stroke-dasharray="3 3"/></svg>
+              <span>暂无目标</span>
             </div>
           </div>
         </div>
 
-        <!-- 选中目标详情 -->
-        <div class="panel-section detail-section" v-if="selectedTrack">
-          <div class="section-title">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" stroke="#2563EB" stroke-width="2"/><path d="M8 12h8M12 8v8" stroke="#2563EB" stroke-width="2"/></svg>
-            目标详情 &nbsp;<span class="tid-chip">ID {{ selectedTrack.tid }}</span>
-          </div>
-
-          <div class="detail-cols">
-            <div class="detail-col">
-              <div class="detail-group-label">位置 (m)</div>
-              <div class="detail-row"><span>X</span><span class="val">{{ selectedTrack.x.toFixed(3) }}</span></div>
-              <div class="detail-row"><span>Y</span><span class="val">{{ selectedTrack.y.toFixed(3) }}</span></div>
-              <div class="detail-row"><span>Z</span><span class="val">{{ selectedTrack.z.toFixed(3) }}</span></div>
-              <div class="detail-row accent"><span>距离</span><span class="val blue">{{ selectedTrack.dist.toFixed(2) }}m</span></div>
-              <div class="detail-row accent"><span>方位</span><span class="val blue">{{ selectedTrack.azimuth.toFixed(1) }}°</span></div>
+        <!-- ③ 选中目标详情（浮层，覆盖在面板底部） -->
+        <div class="detail-overlay" v-if="selectedTrack" @click.self="selectedTid = null">
+          <div class="detail-card">
+            <div class="detail-card-head">
+              <span class="tid-chip">T{{ selectedTrack.tid }}</span>
+              <span class="detail-dist" :class="distClass(selectedTrack.dist)">{{ selectedTrack.dist.toFixed(2) }}m</span>
+              <span class="detail-speed">{{ selectedTrack.speed.toFixed(2) }} m/s</span>
+              <button class="detail-close" @click="selectedTid = null">✕</button>
             </div>
-            <div class="detail-col">
-              <div class="detail-group-label">速度 (m/s)</div>
-              <div class="detail-row"><span>Vx</span><span class="val">{{ selectedTrack.vx.toFixed(3) }}</span></div>
-              <div class="detail-row"><span>Vy</span><span class="val">{{ selectedTrack.vy.toFixed(3) }}</span></div>
-              <div class="detail-row"><span>Vz</span><span class="val">{{ selectedTrack.vz.toFixed(3) }}</span></div>
-              <div class="detail-row accent"><span>|V|</span><span class="val blue">{{ selectedTrack.speed.toFixed(3) }}</span></div>
-              <div class="detail-group-label" style="margin-top:8px">加速度 (m/s²)</div>
-              <div class="detail-row"><span>Ax</span><span class="val">{{ selectedTrack.ax.toFixed(3) }}</span></div>
-              <div class="detail-row"><span>Ay</span><span class="val">{{ selectedTrack.ay.toFixed(3) }}</span></div>
-              <div class="detail-row"><span>Az</span><span class="val">{{ selectedTrack.az.toFixed(3) }}</span></div>
-            </div>
-          </div>
-
-          <div class="detail-footer">
-            <div class="footer-item">
-              <span class="footer-label">运动状态</span>
-              <span class="footer-val" :class="stateColor(selectedTrack.state)">{{ stateLabel(selectedTrack.state) }}</span>
-            </div>
-            <div class="footer-item">
-              <span class="footer-label">置信度</span>
-              <div class="confidence-bar">
-                <div class="confidence-fill" :style="{ width: (selectedTrack.confidence * 100) + '%' }"></div>
+            <div class="detail-grid">
+              <div class="dg-item"><span class="dg-l">X</span><span class="dg-v">{{ selectedTrack.x.toFixed(2) }}</span></div>
+              <div class="dg-item"><span class="dg-l">Y</span><span class="dg-v">{{ selectedTrack.y.toFixed(2) }}</span></div>
+              <div class="dg-item"><span class="dg-l">方位</span><span class="dg-v blue">{{ selectedTrack.azimuth.toFixed(1) }}°</span></div>
+              <div class="dg-item"><span class="dg-l">Vx</span><span class="dg-v">{{ selectedTrack.vx.toFixed(2) }}</span></div>
+              <div class="dg-item"><span class="dg-l">Vy</span><span class="dg-v">{{ selectedTrack.vy.toFixed(2) }}</span></div>
+              <div class="dg-item">
+                <span class="dg-l">状态</span>
+                <span class="dg-v" :class="stateColor(selectedTrack.state)">{{ stateLabel(selectedTrack.state) }}</span>
               </div>
-              <span class="footer-val">{{ (selectedTrack.confidence * 100).toFixed(0) }}%</span>
+              <div class="dg-item dg-wide">
+                <span class="dg-l">置信度</span>
+                <div class="confidence-bar"><div class="confidence-fill" :style="{ width: (selectedTrack.confidence * 100) + '%' }"></div></div>
+                <span class="dg-v">{{ (selectedTrack.confidence * 100).toFixed(0) }}%</span>
+              </div>
             </div>
           </div>
         </div>
-
-
 
       </div>
     </div>
@@ -207,6 +214,7 @@ import * as THREE from 'three'
 import { io } from 'socket.io-client'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import { clone as skeletonClone } from 'three/examples/jsm/utils/SkeletonUtils'
+import eventBus from '@/eventBus.js'
 
 export default {
   name: 'RadarDisplay',
@@ -227,7 +235,8 @@ export default {
       modelLoading: false,
       camDetections: [],
       _cocoModel: null,
-      _camDetecting: false
+      _camDetecting: false,
+      camExpanded: false
     }
   },
   created() {
@@ -250,6 +259,12 @@ export default {
     this._mixers = {}          // tid → AnimationMixer
     this._prevT = 0            // renderLoop 上一帧时间戳
   },
+  watch: {
+    camExpanded(_val) {
+      // 已不使用本页展开，保留占位防止 Vue 警告
+    }
+  },
+
   computed: {
     tracksSorted() {
       return [...this.tracks].sort((a, b) => a.dist - b.dist)
@@ -268,6 +283,121 @@ export default {
       if (danger.length > 0) return `危险！${danger.length} 个目标 < 3m`
       if (warn.length > 0) return `注意！${warn.length} 个目标 < 8m`
       return '周边安全'
+    },
+
+    // ── 各预警模块状态（根据实时轨迹数据计算）──
+    warnModules() {
+      const t = this.tracks
+      const camPerson = this.camActive && this._lastDetections && this._lastDetections.some(d => d.class === 'person')
+
+      // 前方目标：azimuth 在 315°~360° 或 0°~45° 内（正前方）
+      const frontTargets = t.filter(tr => {
+        const a = tr.azimuth
+        return (a < 45 || a > 315)
+      })
+      // 后方目标：azimuth 在 135°~225° 内
+      const rearTargets = t.filter(tr => tr.azimuth > 135 && tr.azimuth < 225)
+      // 侧方目标：45°~135° 或 225°~315°
+      const sideTargets = t.filter(tr => (tr.azimuth >= 45 && tr.azimuth <= 135) || (tr.azimuth >= 225 && tr.azimuth <= 315))
+      // 左侧：225°~315°，右侧：45°~135°
+      const leftTargets = t.filter(tr => tr.azimuth >= 225 && tr.azimuth <= 315)
+      const rightTargets = t.filter(tr => tr.azimuth >= 45 && tr.azimuth <= 135)
+
+      // TTC = dist / |接近速度|（vy < 0 表示靠近）
+      const calcTTC = (tr) => {
+        const vClose = -tr.vy  // 靠近为正
+        if (vClose <= 0.3) return 99
+        return Math.min((tr.dist / vClose).toFixed(1) * 1, 99)
+      }
+
+      // 1. 前向碰撞预警 FCW（前方目标 dist<15，TTC<3s）
+      const fcwTargets = frontTargets.filter(tr => tr.dist < 15)
+      const fcwCrit = fcwTargets.find(tr => calcTTC(tr) < 3)
+      const fcwWarn = fcwTargets.find(tr => calcTTC(tr) < 6)
+      const fcwLevel = fcwCrit ? 'danger' : fcwWarn ? 'warning' : 'safe'
+      const fcwActive = !!(fcwCrit || fcwWarn)
+
+      // 2. 后方来车碰撞预警 RCW（后方目标快速接近）
+      const rcwCrit = rearTargets.find(tr => tr.speed > 5 && tr.dist < 10)
+      const rcwWarn = rearTargets.find(tr => tr.speed > 2 && tr.dist < 20)
+      const rcwLevel = rcwCrit ? 'danger' : rcwWarn ? 'warning' : 'safe'
+      const rcwActive = !!(rcwCrit || rcwWarn)
+
+      // 3. 盲区监测 BSD（侧后方高速目标）
+      const bsdLeft = leftTargets.find(tr => tr.speed > 1.5 && tr.dist < 20)
+      const bsdRight = rightTargets.find(tr => tr.speed > 1.5 && tr.dist < 20)
+      const bsdActive = !!(bsdLeft || bsdRight)
+      const bsdLevel = bsdActive ? 'warning' : 'safe'
+      const bsdSide = bsdLeft && bsdRight ? '双' : bsdLeft ? '左' : bsdRight ? '右' : ''
+
+      // 4. 路口横向来车 LCW（侧方近距离高速目标）
+      const lcwCrit = sideTargets.find(tr => tr.dist < 6 && tr.speed > 2)
+      const lcwWarn = sideTargets.find(tr => tr.dist < 12 && tr.speed > 1)
+      const lcwLevel = lcwCrit ? 'danger' : lcwWarn ? 'warning' : 'safe'
+
+      // 5. 变道预警 LCA（后方 TTC<2.5s）
+      const lcaTargets = rearTargets.filter(tr => tr.dist < 30)
+      const lcaCrit = lcaTargets.find(tr => calcTTC(tr) < 2.5)
+      const lcaWarn = lcaTargets.find(tr => calcTTC(tr) < 4)
+      const lcaLevel = lcaCrit ? 'danger' : lcaWarn ? 'warning' : 'safe'
+
+      // 6. 行人碰撞预警 PCW（摄像头识别到人 + 雷达近距离）
+      const pcwActive = camPerson && frontTargets.some(tr => tr.dist < 8)
+      const pcwLevel = (camPerson && frontTargets.some(tr => tr.dist < 3)) ? 'danger'
+        : pcwActive ? 'warning' : 'safe'
+
+      // 7. 跟车过近 TTC_CLOSE（前方 dist<5m）
+      const ttcClose = frontTargets.find(tr => tr.dist < 5)
+      const ttcDanger = frontTargets.find(tr => tr.dist < 2)
+      const ttcLevel = ttcDanger ? 'danger' : ttcClose ? 'warning' : 'safe'
+
+      // 8. 倒车接近 RCTA（后方 0.5~5m，低速）
+      const rctaTarget = rearTargets.find(tr => tr.dist < 5 && tr.dist > 0.4)
+      const rctaLevel = rctaTarget && rctaTarget.dist < 2 ? 'danger' : rctaTarget ? 'warning' : 'safe'
+
+      // 9. 超车回正 OVT（后方 dist<15m，速度很快接近）
+      const ovtTarget = rearTargets.find(tr => tr.speed > 6 && tr.dist < 15)
+      const ovtLevel = ovtTarget ? 'danger' : rearTargets.find(tr => tr.speed > 3 && tr.dist < 20) ? 'warning' : 'safe'
+
+      // 10. 前车起步 FVD（前方近目标 speed 由静止变动）
+      const fvdTarget = frontTargets.find(tr => tr.dist < 6 && tr.speed > 0.3 && tr.speed < 2)
+      const fvdLevel = fvdTarget ? 'warning' : 'safe'
+
+      const levelLabel = (l) => l === 'danger' ? '危险' : l === 'warning' ? '预警' : '正常'
+      const nearestFront = frontTargets.reduce((a, b) => (!a || b.dist < a.dist) ? b : a, null)
+
+      return {
+        fcw: { level: fcwLevel, active: fcwActive, label: levelLabel(fcwLevel),
+          ttc: fcwCrit ? calcTTC(fcwCrit) : fcwWarn ? calcTTC(fcwWarn) : '--',
+          dist: nearestFront ? nearestFront.dist.toFixed(1) : '--' },
+        rcw: { level: rcwLevel, active: rcwActive, label: levelLabel(rcwLevel),
+          speed: rcwCrit ? rcwCrit.speed.toFixed(1) : rcwWarn ? rcwWarn.speed.toFixed(1) : '--' },
+        bsd: { level: bsdLevel, active: bsdActive, label: levelLabel(bsdLevel), side: bsdSide },
+        lcw: { level: lcwLevel, active: !!(lcwCrit||lcwWarn), label: levelLabel(lcwLevel),
+          dist: lcwCrit ? lcwCrit.dist.toFixed(1) : lcwWarn ? lcwWarn.dist.toFixed(1) : '--' },
+        lca: { level: lcaLevel, active: !!(lcaCrit||lcaWarn), label: levelLabel(lcaLevel),
+          ttc: lcaCrit ? calcTTC(lcaCrit) : lcaWarn ? calcTTC(lcaWarn) : '--' },
+        pcw: { level: pcwLevel, active: pcwActive, label: levelLabel(pcwLevel) },
+        ttc: { level: ttcLevel, active: !!(ttcClose||ttcDanger), label: levelLabel(ttcLevel),
+          dist: ttcDanger ? ttcDanger.dist.toFixed(1) : ttcClose ? ttcClose.dist.toFixed(1) : '--' },
+        rcta: { level: rctaLevel, active: !!rctaTarget, label: levelLabel(rctaLevel),
+          dist: rctaTarget ? rctaTarget.dist.toFixed(1) : '--' },
+        ovt: { level: ovtLevel, active: !!ovtTarget, label: levelLabel(ovtLevel) },
+        fvd: { level: fvdLevel, active: !!fvdTarget, label: levelLabel(fvdLevel) }
+      }
+    },
+
+    activeWarnCount() {
+      if (!this.warnModules) return 0
+      return Object.values(this.warnModules).filter(m => m.level !== 'safe').length
+    },
+
+    warnNameMap() {
+      return {
+        fcw: '前向碰撞', rcw: '后方来车', bsd: '盲区监测', lcw: '路口横向',
+        lca: '变道预警', pcw: '行人预警', ttc: '跟车过近',
+        rcta: '倒车接近', ovt: '超车回正', fvd: '前车起步'
+      }
     }
   },
   mounted() {
@@ -291,6 +421,13 @@ export default {
   },
   methods: {
     goBack() { this.$emit('reHome') },
+
+    // 双击摄像头 → 覆盖地图页面
+    expandCamToMap() {
+      const video = this.$refs.camVideo
+      const stream = video && video.srcObject
+      eventBus.emit('cam-expand-to-map', stream || null)
+    },
 
     // ─── 摄像头 + YOLOv8 Worker 识别 ──────────────────────────────────
     async startCamera() {
@@ -406,6 +543,12 @@ export default {
           ctx.fillText(label, x + 4, y - 3)
         })
         this._syncDetectionsToScene(this._lastDetections, this._lastVW, this._lastVH)
+        // 同步识别结果到地图覆盖层
+        eventBus.emit('cam-detections', {
+          detections: this._lastDetections,
+          vw: this._lastVW,
+          vh: this._lastVH
+        })
       }
       this._detectRaf = requestAnimationFrame(() => this._detectLoop())
     },
@@ -547,11 +690,11 @@ export default {
     },
 
     _buildScanRings(parent) {
-      // 三个同心扫描圆挂载到 parent（骑手 group），随骑手一起移动
+      // 三个同心扫描圆：半径按视觉坐标（实际距离×3），对应实际1m/2m/3m
       const ringMat = (opacity) => new THREE.MeshBasicMaterial({
         color: 0x3b82f6, side: THREE.DoubleSide, transparent: true, opacity
       })
-      for (const [r, op] of [[3, 0.10], [6, 0.07], [10, 0.04]]) {
+      for (const [r, op] of [[3, 0.10], [6, 0.07], [9, 0.04]]) {
         const ring = new THREE.Mesh(new THREE.RingGeometry(r - 0.04, r + 0.04, 64), ringMat(op + 0.08))
         ring.rotation.x = -Math.PI / 2
         ring.position.y = 0.015
@@ -733,15 +876,17 @@ export default {
 
       tracks.forEach(t => {
         // 人在前方(+z)：雷达 y 正方向 = 电动车前方 = Three.js +z
-        let px = t.x
-        let pz = t.y
+        // 视觉放大系数：实际1m在场景中显示3m，便于观察
+        const VISUAL_SCALE = 3.0
+        let px = t.x * VISUAL_SCALE
+        let pz = t.y * VISUAL_SCALE
 
         // 摄像头开启且识别到人时：用摄像头横向角度修正X（更准）
         if (personDet && this._lastVW) {
           const [bx, , bw] = personDet.bbox
           const cx = (bx + bw / 2) / this._lastVW
           const angle = (cx - 0.5) * (Math.PI / 3)
-          const dist = Math.sqrt(t.x * t.x + t.y * t.y)
+          const dist = Math.sqrt(t.x * t.x + t.y * t.y) * VISUAL_SCALE
           px = dist * Math.sin(angle)
           pz = dist * Math.cos(angle)
         }
@@ -1072,40 +1217,112 @@ export default {
       padding: 2px 7px; border-radius: 5px;
     }
   }
+
+  // ── 预警浮层（左下角，竖向排列pills） ──
+  .canvas-warn-overlay {
+    position: absolute;
+    left: 12px; bottom: 40px;   // 避开 hint 文字
+    display: flex; flex-direction: column; gap: 4px;
+    pointer-events: none;        // 完全不遮挡鼠标拖拽
+    z-index: 6;
+    max-width: 200px;
+  }
+
+  .cwarn-pill {
+    display: flex; align-items: center; gap: 5px;
+    padding: 4px 9px 4px 6px;
+    border-radius: 100px;
+    font-size: 11px; font-weight: 600;
+    backdrop-filter: blur(6px);
+    white-space: nowrap;
+
+    &.warning {
+      background: rgba(249,115,22,0.82);
+      color: #fff;
+      box-shadow: 0 2px 8px rgba(249,115,22,0.35);
+      animation: pillWarn 1.2s ease-in-out infinite;
+    }
+    &.danger {
+      background: rgba(239,68,68,0.88);
+      color: #fff;
+      box-shadow: 0 2px 10px rgba(239,68,68,0.5);
+      animation: pillDanger 0.7s ease-in-out infinite;
+    }
+
+    svg { flex-shrink: 0; opacity: 0.9; }
+    .cwarn-name { flex: 1; }
+    .cwarn-data {
+      font-size: 10px; font-weight: 700; opacity: 0.9;
+      font-family: 'Courier New', monospace;
+    }
+  }
+
+  .cwarn-safe-dot {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 10px; font-weight: 600;
+    color: #22c55e;
+    background: rgba(0,0,0,0.3);
+    backdrop-filter: blur(6px);
+    padding: 3px 9px 3px 6px; border-radius: 100px;
+    pointer-events: none;
+
+    .safe-pulse {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 0 0 rgba(34,197,94,0.6);
+      animation: safeGlow 2s ease-out infinite;
+    }
+  }
 }
+
+@keyframes pillWarn   { 0%,100%{opacity:1} 50%{opacity:0.75} }
+@keyframes pillDanger { 0%,100%{opacity:1; transform:scale(1)} 50%{opacity:0.85; transform:scale(1.02)} }
+@keyframes safeGlow   { 0%{box-shadow:0 0 0 0 rgba(34,197,94,0.6)} 70%{box-shadow:0 0 0 6px rgba(34,197,94,0)} 100%{box-shadow:0 0 0 0 rgba(34,197,94,0)} }
 
 /* ── 右侧面板 ────────────────────── */
 .info-panel {
-  width: 270px;
-  display: flex; flex-direction: column; gap: 8px;
-  overflow-y: auto;
+  width: 290px;
+  display: flex; flex-direction: column; gap: 6px;
+  overflow: hidden;          // 禁止滚动
   background: @bg;
   border-left: 1px solid @border;
-  padding: 10px;
+  padding: 8px;
   flex-shrink: 0;
-
-  &::-webkit-scrollbar { width: 4px; }
-  &::-webkit-scrollbar-thumb { background: @border; border-radius: 2px; }
+  position: relative;        // 供详情浮层定位
 }
 
 .panel-section {
   background: @bg-panel;
   border-radius: 10px;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid @border;
+  overflow: hidden;
+  flex-shrink: 0;
 
   .section-title {
-    font-size: 12px; font-weight: 600; color: @text;
-    margin-bottom: 10px;
-    padding-bottom: 8px;
+    font-size: 11px; font-weight: 600; color: @text;
+    margin-bottom: 7px;
+    padding-bottom: 6px;
     border-bottom: 1px solid @bg-sec;
-    display: flex; align-items: center; gap: 6px;
-    .tid-chip {
-      font-size: 11px; font-weight: 600;
-      background: rgba(37,99,235,0.1);
-      color: @blue; padding: 1px 7px; border-radius: 100px;
-    }
+    display: flex; align-items: center; gap: 5px;
+    flex-shrink: 0;
   }
+}
+
+// 预警格占满剩余上半部分
+.warn-module-panel {
+  flex: 1 1 0;
+  display: flex; flex-direction: column;
+  min-height: 0;
+  .warn-grid { flex: 1; min-height: 0; }
+}
+
+// 下半行：摄像头 + 目标列表水平排列
+.panel-track-section {
+  flex: 0 0 auto;
+  max-height: 45%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
 
 /* 目标列表 */
@@ -1113,13 +1330,14 @@ export default {
   margin-left: auto;
   font-size: 10px; font-weight: 600;
   background: rgba(37,99,235,0.1); color: @blue;
-  padding: 1px 6px; border-radius: 100px;
+  padding: 1px 5px; border-radius: 100px;
 }
 
 .alert-banner {
-  display: flex; align-items: center; gap: 6px;
-  font-size: 11px; font-weight: 600;
-  padding: 5px 8px; border-radius: 7px; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 600;
+  padding: 3px 6px; border-radius: 6px; margin-bottom: 5px;
+  flex-shrink: 0;
   &.danger-banner {
     background: rgba(239,68,68,0.1); color: @red;
     border: 1px solid rgba(239,68,68,0.25);
@@ -1132,21 +1350,23 @@ export default {
 }
 
 .track-list {
-  display: flex; flex-direction: column; gap: 5px;
+  flex: 1; overflow: hidden;
+  display: flex; flex-direction: column; gap: 4px;
   .no-data {
-    display: flex; flex-direction: column; align-items: center; gap: 6px;
-    padding: 16px 0; color: @text-3; font-size: 12px;
+    display: flex; flex-direction: column; align-items: center; gap: 5px;
+    padding: 12px 0; color: @text-3; font-size: 11px;
   }
 }
 
 .track-item {
   display: flex; align-items: stretch;
-  border-radius: 8px;
+  border-radius: 7px;
   border: 1px solid @border;
   background: @bg;
   cursor: pointer;
   transition: all 0.15s;
   overflow: hidden;
+  flex-shrink: 0;
 
   &:hover { border-color: #93c5fd; background: rgba(37,99,235,0.03); }
   &.selected { border-color: @blue; background: rgba(37,99,235,0.06); }
@@ -1154,108 +1374,114 @@ export default {
   &.warning { border-color: rgba(249,115,22,0.4); }
 
   .threat-bar {
-    width: 4px; flex-shrink: 0;
+    width: 3px; flex-shrink: 0;
     &.safe { background: @blue; }
     &.warning { background: @orange; }
     &.danger { background: @red; animation: dangerBlink 0.6s infinite; }
   }
 
   .track-body {
-    flex: 1; padding: 7px 9px;
-    display: flex; flex-direction: column; gap: 5px;
+    flex: 1; padding: 5px 7px;
+    display: flex; flex-direction: column; gap: 3px;
   }
 
   .track-top-row {
-    display: flex; align-items: center; gap: 7px;
-
+    display: flex; align-items: center; gap: 5px;
     .track-id-badge {
-      font-size: 10px; font-weight: 700;
-      padding: 1px 6px; border-radius: 5px;
+      font-size: 9px; font-weight: 700;
+      padding: 1px 5px; border-radius: 4px;
       &.safe    { background: rgba(37,99,235,0.12);  color: @blue; }
       &.warning { background: rgba(249,115,22,0.15); color: @orange; }
       &.danger  { background: rgba(239,68,68,0.15);  color: @red; }
     }
-
     .track-dist {
-      font-size: 16px; font-weight: 800;
+      font-size: 14px; font-weight: 800;
       font-family: 'Courier New', monospace;
       &.safe    { color: @blue; }
       &.warning { color: @orange; }
       &.danger  { color: @red; }
-      span { font-size: 10px; font-weight: 400; color: @text-3; margin-left: 1px; }
+      span { font-size: 9px; font-weight: 400; color: @text-3; }
     }
-
     .track-azimuth-wrap {
       margin-left: auto;
-      display: flex; align-items: center; gap: 4px;
-      .azimuth-arrow { flex-shrink: 0; }
-      .azimuth-text {
-        font-size: 11px; font-weight: 600; color: @text-2; min-width: 20px; text-align: center;
-      }
+      display: flex; align-items: center; gap: 3px;
+      .azimuth-text { font-size: 10px; font-weight: 600; color: @text-2; }
     }
   }
 
   .track-bottom-row {
-    display: flex; align-items: center; gap: 6px;
-
-    .track-speed-row {
-      display: flex; align-items: center; gap: 3px;
-      font-size: 11px; color: @text-2;
-      font-family: 'Courier New', monospace;
-    }
-
+    display: flex; align-items: center; gap: 5px;
+    .track-speed-row { font-size: 10px; color: @text-2; font-family: 'Courier New', monospace; }
     .track-state-badge {
-      font-size: 10px; font-weight: 600;
-      padding: 1px 6px; border-radius: 100px; background: @bg-sec;
+      font-size: 9px; font-weight: 600;
+      padding: 1px 5px; border-radius: 100px; background: @bg-sec;
       &.state-move { color: @green; background: rgba(34,197,94,0.1); }
       &.state-lost { color: @red;   background: rgba(239,68,68,0.1); }
       &.state-new  { color: @blue;  background: rgba(37,99,235,0.1); }
       &.state-idle { color: @text-3; }
     }
+  }
+}
 
-    .track-conf {
-      margin-left: auto;
-      font-size: 10px; color: @text-3;
+/* ── 详情浮层（点击目标后叠在面板上） ── */
+.detail-overlay {
+  position: absolute; inset: 0;
+  background: rgba(248,250,252,0.96);
+  backdrop-filter: blur(4px);
+  border-radius: 10px;
+  padding: 10px;
+  display: flex; flex-direction: column;
+  z-index: 20;
+  border: 1px solid @border;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+
+  .detail-card-head {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 10px; padding-bottom: 8px;
+    border-bottom: 1px solid @border;
+    .tid-chip {
+      font-size: 12px; font-weight: 700;
+      background: rgba(37,99,235,0.1); color: @blue;
+      padding: 2px 8px; border-radius: 100px;
+    }
+    .detail-dist {
+      font-size: 18px; font-weight: 800;
       font-family: 'Courier New', monospace;
+      &.safe    { color: @blue; }
+      &.warning { color: @orange; }
+      &.danger  { color: @red; }
+    }
+    .detail-speed { font-size: 11px; color: @text-2; font-family: 'Courier New', monospace; }
+    .detail-close {
+      margin-left: auto; border: none; background: @bg-sec;
+      color: @text-3; cursor: pointer; border-radius: 6px;
+      width: 22px; height: 22px; font-size: 11px;
+      display: flex; align-items: center; justify-content: center;
+      &:hover { background: rgba(239,68,68,0.1); color: @red; }
     }
   }
-}
 
-/* 详情面板 */
-.detail-cols {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-}
-.detail-col {
-  .detail-group-label {
-    font-size: 10px; font-weight: 600; text-transform: uppercase;
-    letter-spacing: 0.8px; color: @text-3; margin-bottom: 5px;
-  }
-  .detail-row {
-    display: flex; justify-content: space-between;
-    padding: 3px 0;
-    border-bottom: 1px solid @bg-sec;
-    font-size: 11px;
-    &:last-child { border-bottom: none; }
-    &.accent { background: rgba(37,99,235,0.03); margin: 0 -4px; padding: 3px 4px; border-radius: 4px; border: none; }
-    span:first-child { color: @text-3; }
-    .val {
-      font-family: 'Courier New', monospace; font-weight: 600; color: @text;
+  .detail-grid {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+
+    .dg-item {
+      background: @bg-sec; border-radius: 7px;
+      padding: 6px 8px;
+      display: flex; flex-direction: column; gap: 2px;
+      &.dg-wide { grid-column: span 3; flex-direction: row; align-items: center; gap: 8px; }
+    }
+    .dg-l { font-size: 9px; color: @text-3; font-weight: 600; text-transform: uppercase; }
+    .dg-v {
+      font-size: 13px; font-weight: 700;
+      font-family: 'Courier New', monospace; color: @text;
       &.blue { color: @blue; }
     }
-  }
-}
-.detail-footer {
-  margin-top: 10px; padding-top: 8px;
-  border-top: 1px solid @bg-sec;
-  display: flex; flex-direction: column; gap: 6px;
-  .footer-item {
-    display: flex; align-items: center; gap: 8px;
-    font-size: 11px;
-    .footer-label { color: @text-3; min-width: 50px; }
-    .footer-val { font-weight: 600; }
+    .dg-wide .dg-v { font-size: 11px; }
+
     .confidence-bar {
-      flex: 1; height: 4px; background: @bg-sec; border-radius: 2px; overflow: hidden;
-      .confidence-fill { height: 100%; background: @blue; border-radius: 2px; transition: width 0.3s; }
+      flex: 1; height: 5px; background: @border; border-radius: 3px; overflow: hidden;
+      .confidence-fill { height: 100%; background: @blue; border-radius: 3px; transition: width 0.3s; }
     }
   }
 }
@@ -1322,57 +1548,258 @@ export default {
   50%     { border-color: rgba(239,68,68,0.5); box-shadow: 0 0 0 4px rgba(239,68,68,0.08) inset, 0 0 40px 8px rgba(239,68,68,0.15); }
 }
 
-/* ── 摄像头识别区域 ──────────────── */
-.cam-section {
-  .section-title {
-    .cam-status {
-      margin-left: auto;
-      font-size: 10px; font-weight: 500;
-      padding: 1px 7px; border-radius: 100px;
-      background: @bg-sec; color: @text-3;
-      &.active { background: rgba(34,197,94,0.12); color: #16a34a; }
-    }
+/* ── 预警模块总览面板 ─────────────── */
+.warn-module-panel {
+  .active-count {
+    margin-left: auto;
+    font-size: 10px; font-weight: 600;
+    background: rgba(239,68,68,0.12); color: @red;
+    padding: 1px 7px; border-radius: 100px;
+    animation: dangerBlink 1s infinite;
   }
 }
 
-.cam-wrap {
-  position: relative;
-  width: 100%; padding-top: 75%; /* 4:3 */
-  background: @bg-sec; border-radius: 8px;
-  overflow: hidden;
+.warn-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  align-content: start;   // 有触发项时顶部对齐，不拉伸
+}
 
-  video, canvas {
-    position: absolute; top: 0; left: 0;
-    width: 100%; height: 100%;
+// 全安全状态：撑满整个 grid 区域，居中显示
+.warn-all-safe {
+  grid-column: span 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 5px; padding: 20px 0;
+  color: @green;
+
+  .safe-title { font-size: 15px; font-weight: 700; color: @green; }
+  .safe-sub   { font-size: 11px; color: @text-3; }
+  .safe-dots  { display: flex; gap: 5px; margin-top: 4px; }
+  .safe-dot   {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: @green; opacity: 0.5;
+    animation: safePulse 1.5s ease-in-out infinite;
+    &:nth-child(2) { animation-delay: 0.15s; }
+    &:nth-child(3) { animation-delay: 0.3s; }
+    &:nth-child(4) { animation-delay: 0.45s; }
+    &:nth-child(5) { animation-delay: 0.6s; }
+    &:nth-child(6) { animation-delay: 0.75s; }
+    &:nth-child(7) { animation-delay: 0.9s; }
+    &:nth-child(8) { animation-delay: 1.05s; }
+    &:nth-child(9) { animation-delay: 1.2s; }
+    &:nth-child(10){ animation-delay: 1.35s; }
+  }
+}
+
+@keyframes safePulse { 0%,100%{opacity:0.3; transform:scale(0.8)} 50%{opacity:1; transform:scale(1)} }
+
+.warn-card {
+  border-radius: 7px;
+  border: 1px solid @border;
+  padding: 6px 8px;
+  background: @bg;
+  transition: all 0.2s;
+
+  &.warning {
+    border-color: rgba(249,115,22,0.5);
+    background: rgba(249,115,22,0.04);
+  }
+  &.danger {
+    border-color: rgba(239,68,68,0.6);
+    background: rgba(239,68,68,0.06);
+    animation: cardDangerBlink 0.7s ease-in-out infinite;
+  }
+
+  .warn-card-head {
+    display: flex; align-items: center; gap: 4px; margin-bottom: 3px;
+  }
+
+  .warn-icon {
+    display: flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 4px;
+    background: @bg-sec; flex-shrink: 0; color: @text-3;
+    .warning & { background: rgba(249,115,22,0.12); color: @orange; }
+    .danger  & { background: rgba(239,68,68,0.12);  color: @red; }
+  }
+
+  .warn-name {
+    font-size: 11px; font-weight: 600; color: @text;
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .warn-badge {
+    font-size: 9px; font-weight: 700;
+    padding: 1px 5px; border-radius: 100px; flex-shrink: 0;
+    &.safe    { background: rgba(37,99,235,0.1);  color: @blue; }
+    &.warning { background: rgba(249,115,22,0.15); color: @orange; }
+    &.danger  { background: rgba(239,68,68,0.15);  color: @red; }
+  }
+
+  .warn-meta {
+    font-size: 10px; color: @text-2;
+    display: flex; gap: 5px; flex-wrap: wrap;
+    font-family: 'Courier New', monospace;
+    &.muted { color: @text-3; }
+    .warning & { color: @orange; }
+    .danger  & { color: @red; font-weight: 600; }
+  }
+}
+
+@keyframes cardDangerBlink {
+  0%,100% { border-color: rgba(239,68,68,0.6); background: rgba(239,68,68,0.06); }
+  50%     { border-color: rgba(239,68,68,0.25); background: rgba(239,68,68,0.02); }
+}
+
+/* ── 摄像头画中画（叠在 Three.js 画布右下角） ── */
+.cam-panel {
+  flex-shrink: 0;
+  padding: 0;          // 去掉 panel-section 内边距，让视频铺满
+  overflow: hidden;
+  border-radius: 10px;
+}
+
+.cam-pip {
+  position: relative;  // 面板内普通流，不再 absolute
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #0a0f1a;
+  border: none;
+  box-shadow: none;
+
+  &.active {
+    box-shadow: 0 0 0 1.5px rgba(37,99,235,0.5) inset;
+  }
+
+  video {
+    display: block; width: 100%; height: auto;
     object-fit: cover;
   }
-  canvas { pointer-events: none; }
-
-  .cam-placeholder {
-    position: absolute; inset: 0;
-    display: flex; flex-direction: column; align-items: center; justify-content: center;
-    gap: 6px; cursor: pointer; color: @text-3; font-size: 11px;
-    &:hover { background: rgba(37,99,235,0.04); color: @blue; svg path, svg rect, svg circle { stroke: @blue; } }
+  canvas {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
   }
 
-  .cam-loading {
+  .cam-pip-placeholder {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 5px; height: 150px;
+    cursor: pointer;
+    color: rgba(255,255,255,0.4); font-size: 11px;
+    &:hover { background: rgba(37,99,235,0.08); color: rgba(255,255,255,0.7); }
+    svg { opacity: 0.5; }
+  }
+
+  .cam-pip-loading {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
-    background: rgba(241,245,249,0.85);
-    font-size: 12px; color: @text-2;
+    background: rgba(10,15,26,0.8);
+    font-size: 11px; color: rgba(255,255,255,0.6);
+  }
+
+  .cam-pip-badge {
+    position: absolute; top: 6px; left: 7px;
+    display: flex; align-items: center; gap: 4px;
+    font-size: 9px; font-weight: 600;
+    background: rgba(0,0,0,0.55);
+    color: rgba(255,255,255,0.6);
+    padding: 2px 7px; border-radius: 100px;
+    backdrop-filter: blur(4px);
+    .pip-dot {
+      width: 5px; height: 5px; border-radius: 50%;
+      background: rgba(255,255,255,0.4);
+    }
+    &.active {
+      color: #4ade80;
+      .pip-dot { background: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.3); animation: blink 2s infinite; }
+    }
+  }
+
+  .cam-pip-tags {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    display: flex; flex-wrap: wrap; gap: 3px;
+    padding: 4px 5px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.6));
+    .pip-tag {
+      font-size: 9px; font-weight: 700;
+      background: rgba(249,115,22,0.85); color: #fff;
+      padding: 1px 6px; border-radius: 100px;
+    }
+  }
+
+  .cam-pip-hint {
+    position: absolute; bottom: 6px; right: 8px;
+    font-size: 9px; color: rgba(255,255,255,0.45);
+    pointer-events: none;
   }
 }
 
-.detection-tags {
-  display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px;
-  .det-tag {
-    padding: 2px 8px; border-radius: 100px;
+/* ── 摄像头全屏覆盖层（双击展开，覆盖3D画布） ── */
+.cam-fullscreen {
+  position: absolute; inset: 0;
+  z-index: 20;
+  background: #000;
+  cursor: pointer;
+
+  video {
+    width: 100%; height: 100%;
+    object-fit: contain;
+    display: block;
+  }
+
+  .cam-fs-badge {
+    position: absolute; top: 10px; left: 12px;
+    display: flex; align-items: center; gap: 5px;
     font-size: 11px; font-weight: 600;
-    background: rgba(249,115,22,0.12); color: @orange;
-    border: 1px solid rgba(249,115,22,0.3);
+    background: rgba(0,0,0,0.55);
+    color: rgba(255,255,255,0.6);
+    padding: 3px 10px; border-radius: 100px;
+    backdrop-filter: blur(4px);
+    .pip-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: rgba(255,255,255,0.4);
+    }
+    &.active {
+      color: #4ade80;
+      .pip-dot { background: #22c55e; box-shadow: 0 0 0 2px rgba(34,197,94,0.3); animation: blink 2s infinite; }
+    }
+  }
+
+  .cam-fs-tags {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    display: flex; flex-wrap: wrap; gap: 5px;
+    padding: 12px 14px;
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    .pip-tag {
+      font-size: 12px; font-weight: 700;
+      background: rgba(249,115,22,0.9); color: #fff;
+      padding: 3px 10px; border-radius: 100px;
+    }
+  }
+
+  .cam-fs-close {
+    position: absolute; top: 10px; right: 12px;
+    width: 28px; height: 28px;
+    border: none; border-radius: 50%;
+    background: rgba(0,0,0,0.5);
+    color: #fff; font-size: 13px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(4px);
+    transition: background 0.15s;
+    &:hover { background: rgba(239,68,68,0.7); }
+  }
+
+  .cam-fs-hint {
+    position: absolute; bottom: 10px; right: 14px;
+    font-size: 10px; color: rgba(255,255,255,0.35);
+    pointer-events: none;
   }
 }
-.cam-hint {
-  font-size: 11px; color: @text-3; text-align: center; margin-top: 4px;
-}
+
+/* ── 旧摄像头样式（已不再使用，保留兼容） ── */
+.cam-wrap { display: none; }
+.detection-tags { display: none; }
+.cam-hint { display: none; }
 </style>

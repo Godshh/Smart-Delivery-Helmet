@@ -1,12 +1,26 @@
 <template>
   <div class="mapCo">
+    <!-- 摄像头覆盖地图的全屏层（从雷达页面双击触发） -->
+    <div class="cam-map-overlay" v-if="camMapExpanded" @dblclick="closeCamMapOverlay">
+      <video ref="camMapVideo" autoplay playsinline muted class="cam-map-video"></video>
+      <canvas ref="camMapCanvas" class="cam-map-canvas" style="pointer-events:none"></canvas>
+      <button class="cam-map-close" @click.stop="closeCamMapOverlay">✕</button>
+      <div class="cam-map-hint">双击或点击 ✕ 关闭</div>
+    </div>
     <div
       class="videoConter"
-      :style="{
+      :class="{ 'cam-fullscreen-mode': camFullscreen }"
+      :style="camFullscreen ? {} : {
         width: isChanged ? '100%' : '0%',
         borderRadius: isChanged ? '20px 0px 0px 20px' : '20px 20px 20px 20px',
       }"
+      @dblclick="isChanged && (camFullscreen = !camFullscreen)"
     >
+      <button
+        v-if="camFullscreen"
+        class="cam-fs-close-btn"
+        @click.stop="camFullscreen = false"
+      >✕</button>
       <div v-if="isChanged" class="video-feed-container">
         <img
           ref="videoFeed"
@@ -124,6 +138,8 @@ export default {
       turnDirectionClass: "",
       mapDestroyed: false,
       isChanged: false,
+      camFullscreen: false,
+      camMapExpanded: false,
       coordinates: { left_lane: [], right_lane: [], timestamp: 0 },
       baseUrl: "http://10.194.90.44:5008",
       videoFeedUrl: "",
@@ -151,6 +167,8 @@ export default {
     this.initAMap();
     this.connectSocketIO();
     eventBus.on("add-order-to-map", this.handleNewOrder);
+    eventBus.on("cam-expand-to-map", this.onCamExpandToMap);
+    eventBus.on("cam-detections", this.onCamDetections);
 
     eventBus.on("locate-helmet", this.locateHelmet);
     this.videoFeedUrl = `${this.baseUrl}/video_feed`;
@@ -1089,17 +1107,127 @@ export default {
       this.videoError = "Failed to load video feed. Please check the server.";
     },
 
+    closeCamMapOverlay() {
+      this.camMapExpanded = false;
+      if (this.$refs.camMapVideo) {
+        this.$refs.camMapVideo.srcObject = null;
+      }
+    },
+
+    onCamExpandToMap(stream) {
+      this.camMapExpanded = true;
+      this.$nextTick(() => {
+        const v = this.$refs.camMapVideo;
+        if (v) v.srcObject = stream;
+      });
+    },
+
+    onCamDetections({ detections, vw, vh }) {
+      if (!this.camMapExpanded) return;
+      const canvas = this.$refs.camMapCanvas;
+      if (!canvas || !detections) return;
+      // 让 canvas 和视频源分辨率一致
+      if (canvas.width !== vw) canvas.width = vw;
+      if (canvas.height !== vh) canvas.height = vh;
+      const ctx = canvas.getContext('2d', { willReadFrequently: false });
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      detections.forEach(d => {
+        const [x, y, w, h] = d.bbox;
+        const color = '#22c55e';
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = color;
+        ctx.font = 'bold 11px sans-serif';
+        const label = this.labelCN(d.class) + ' ' + (d.score * 100).toFixed(0) + '%';
+        ctx.fillRect(x, y - 16, ctx.measureText(label).width + 8, 16);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(label, x + 4, y - 3);
+      });
+    },
+
+    labelCN(cls) {
+      const map = {
+        'dining table': '桌子', 'chair': '椅子', 'couch': '沙发',
+        'bed': '床', 'tv': '电视', 'laptop': '笔记本', 'person': '人',
+      };
+      return map[cls] || cls;
+    },
+
     handleVisibilityChange() {
       this.isTabActive = !document.hidden;
     },
   },
   unmounted() {
     eventBus.off("add-order-to-map", this.handleNewOrder);
+    eventBus.off("cam-expand-to-map", this.onCamExpandToMap);
+    eventBus.off("cam-detections", this.onCamDetections);
   },
 };
 </script>
 
 <style scoped lang="less">
+.cam-map-overlay {
+  position: absolute;
+  top: 1%;
+  left: 1%;
+  width: 98%;
+  height: 98%;
+  border-radius: 20px;
+  z-index: 200;
+  background: #000;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cam-map-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cam-map-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cam-map-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 201;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  font-size: 18px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  &:hover {
+    background: rgba(255, 60, 60, 0.85);
+  }
+}
+
+.cam-map-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  pointer-events: none;
+}
+
 .videoConter {
   width: 48%;
   height: 98%;
@@ -1107,6 +1235,38 @@ export default {
   transition: width 0.3s ease, border-radius 0.3s ease;
   position: relative;
   overflow: hidden;
+}
+
+.cam-fullscreen-mode {
+  position: absolute !important;
+  top: 1%;
+  left: 1%;
+  width: 98% !important;
+  height: 98% !important;
+  border-radius: 20px !important;
+  z-index: 100;
+  transition: none;
+}
+
+.cam-fs-close-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 101;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  &:hover {
+    background: rgba(255, 60, 60, 0.8);
+  }
 }
 
 .video-feed-container {
@@ -1176,6 +1336,7 @@ export default {
   display: flex;
   justify-content: center;
   align-items: center;
+  position: relative;
   #container {
     width: 98%;
     border-radius: 20px;

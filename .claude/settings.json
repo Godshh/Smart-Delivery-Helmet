@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find . -not -path ./.git/* -size +50M)",
+      "Read(//c/Users/fugh_/Desktop/竞赛杂乱文件/dm/开机自启动/**)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\fugh_\\Desktop\\竞赛杂乱文件\\dm\\开机自启动"
+    ]
+  }
+}
