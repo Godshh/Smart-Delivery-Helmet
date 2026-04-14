@@ -45,14 +45,6 @@
 
         <!-- 摄像头展开全屏（已移至地图页面） -->
 
-        <!-- 危险距离红色外框警报 -->
-        <div class="danger-border-alert" v-if="tracks.some(t => t.dist < 3)">
-          <div class="alert-label">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2.5" fill="rgba(239,68,68,0.2)" stroke-linejoin="round"/><path d="M12 9v5M12 16.5v.5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
-            危险！目标 &lt; 3m
-          </div>
-        </div>
-
         <!-- 预警浮层（左下角，不遮挡画面） -->
         <div class="canvas-warn-overlay">
           <!-- 有触发：显示各条预警pills -->
@@ -91,6 +83,38 @@
           <span>目标 {{ numTracks }}</span>
           <span>{{ lastUpdate }}</span>
         </div>
+
+        <!-- 场景一 HUD 浮层 -->
+        <transition name="sc1-fade">
+          <div class="sc1-hud" v-if="sc1Active">
+            <div class="sc1-phase-badge" :class="sc1Warning">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" fill="rgba(255,255,255,0.15)"/></svg>
+              {{ sc1PhaseLabel || '场景一运行中' }}
+            </div>
+            <div class="sc1-metrics">
+              <span class="sc1-metric"><em>骑手速度</em>{{ sc1RiderSpeed.toFixed(1) }} m/s</span>
+              <span class="sc1-divider">|</span>
+              <span class="sc1-metric"><em>侧距</em>{{ sc1CarDist.toFixed(1) }} m</span>
+            </div>
+            <div class="sc1-warn-msg" v-if="sc1WarnMsg" :class="sc1Warning">{{ sc1WarnMsg }}</div>
+          </div>
+        </transition>
+
+        <!-- 场景二 HUD 浮层 -->
+        <transition name="sc1-fade">
+          <div class="sc1-hud" v-if="sc2Active">
+            <div class="sc1-phase-badge" :class="sc2Warning">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 20h20L12 2z" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" fill="rgba(255,255,255,0.15)"/></svg>
+              {{ sc2PhaseLabel || '场景二运行中' }}
+            </div>
+            <div class="sc1-metrics">
+              <span class="sc1-metric"><em>速度</em>{{ sc2RiderSpeed.toFixed(1) }} m/s</span>
+              <span class="sc1-divider">|</span>
+              <span class="sc1-metric"><em>TTC</em>{{ sc2TTC > 0 && sc2TTC < 99 ? sc2TTC.toFixed(1) + 's' : '--' }}</span>
+            </div>
+            <div class="sc1-warn-msg" v-if="sc2WarnMsg" :class="sc2Warning">{{ sc2WarnMsg }}</div>
+          </div>
+        </transition>
       </div>
 
       <!-- 右侧信息面板（摄像头 / 预警格 / 目标列表 / 底部详情浮层） -->
@@ -204,6 +228,15 @@
         <span class="alert-dot"></span>
         {{ alertMessage }}
       </div>
+      <!-- 场景模拟按钮 -->
+      <button class="sc1-btn" :class="{ active: sc1Active }" @click="startScenario1">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 3l14 9-14 9V3z" fill="currentColor"/></svg>
+        {{ sc1Active ? '停止场景一' : '场景一: 并行变道' }}
+      </button>
+      <button class="sc1-btn" :class="{ active: sc2Active }" @click="startScenario2">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 3l14 9-14 9V3z" fill="currentColor"/></svg>
+        {{ sc2Active ? '停止场景二' : '场景二: 路口预警' }}
+      </button>
       <div class="brand">IWR6843 · mmWave</div>
     </div>
   </div>
@@ -236,7 +269,23 @@ export default {
       camDetections: [],
       _cocoModel: null,
       _camDetecting: false,
-      camExpanded: false
+      camExpanded: false,
+      // ── 场景一：并行变道预警 ──────────────────────────────────
+      sc1Active: false,          // 是否正在运行
+      sc1Phase: 0,               // 当前阶段 0~4
+      sc1PhaseLabel: '',         // 阶段文字
+      sc1RiderSpeed: 0,          // 主角当前速度
+      sc1Warning: 'safe',        // 'safe' | 'caution' | 'danger'
+      sc1WarnMsg: '',            // 预警提示文字
+      sc1CarDist: 0,             // 与并行车横向距离
+      // ── 场景二：路口相汇预警 ──────────────────────────────────
+      sc2Active: false,
+      sc2Phase: 0,
+      sc2PhaseLabel: '',
+      sc2RiderSpeed: 0,
+      sc2Warning: 'safe',
+      sc2WarnMsg: '',
+      sc2TTC: 0,
     }
   },
   created() {
@@ -613,7 +662,9 @@ export default {
       this.updateCameraPos()
 
       // ── 灯光 ──
-      this._s.add(new THREE.AmbientLight(0xffffff, 1.4))
+      const ambLight = new THREE.AmbientLight(0xffffff, 1.4)
+      this._ambLight = ambLight
+      this._s.add(ambLight)
       const sun = new THREE.DirectionalLight(0xfff4e0, 1.2)
       sun.position.set(8, 16, 6)
       sun.castShadow = true
@@ -631,20 +682,74 @@ export default {
       fillLight.position.set(-5, 5, -8)
       this._s.add(fillLight)
 
-      // ── 地面（大范围白色平面） ──
-      const groundGeo = new THREE.PlaneGeometry(120, 120)
-      const groundMat = new THREE.MeshLambertMaterial({ color: 0xe8edf3 })
-      const ground = new THREE.Mesh(groundGeo, groundMat)
-      ground.rotation.x = -Math.PI / 2
-      ground.position.y = -0.01
-      ground.receiveShadow = true
-      this._s.add(ground)
 
-      // ── sectorGroup 提前创建，不依赖 GLB 加载 ──
-      this._sectorGroup = new THREE.Group()
-      this._sectorGroup.rotation.x = -Math.PI / 2
-      this._sectorGroup.position.y = 0.02
-      this._s.add(this._sectorGroup)
+      // ── 移动虚线轨迹（代替道路，模拟骑手前进方向）──
+      // 主轨迹：沿 +z 中心线，白色虚线段向前滚动
+      // 左/右轨迹：骑手两侧各一条，灰色辅助线
+      this._laneLines = []
+      const trackDefs = [
+        { x: 0,    color: 0x2563eb, opacity: 0.85, width: 0.06, segLen: 1.8, gap: 2.4 }, // 主方向（蓝色）
+        { x: -1.8, color: 0x94a3b8, opacity: 0.45, width: 0.04, segLen: 1.2, gap: 2.4 }, // 左辅助
+        { x:  1.8, color: 0x94a3b8, opacity: 0.45, width: 0.04, segLen: 1.2, gap: 2.4 }, // 右辅助
+      ]
+      trackDefs.forEach(def => {
+        const segs = []
+        for (let z = -60; z < 60; z += (def.segLen + def.gap)) {
+          const seg = new THREE.Mesh(
+            new THREE.PlaneGeometry(def.width, def.segLen),
+            new THREE.MeshBasicMaterial({ color: def.color, transparent: true, opacity: def.opacity, depthWrite: false })
+          )
+          seg.rotation.x = -Math.PI / 2
+          seg.position.set(def.x, 0.005, z)
+          this._s.add(seg)
+          segs.push(seg)
+        }
+        this._laneLines.push({ segs, x: def.x, spacing: def.segLen + def.gap })
+      })
+
+      // ── 方向箭头（每隔 8m 一个，提示前进方向）──
+      this._arrowSegs = []
+      for (let z = -56; z < 60; z += 8) {
+        // 用两段折线组成 ">" 形箭头
+        ;[[-0.22, 0.18], [0.22, 0.18]].forEach(([xOff, zOff]) => {
+          const seg = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.04, 0.4),
+            new THREE.MeshBasicMaterial({ color: 0x2563eb, transparent: true, opacity: 0.3, depthWrite: false })
+          )
+          seg.rotation.x = -Math.PI / 2
+          seg.rotation.z = xOff > 0 ? -0.6 : 0.6
+          seg.position.set(xOff * 0.5, 0.006, z + zOff)
+          this._s.add(seg)
+          this._arrowSegs.push(seg)
+        })
+      }
+
+      // ── 路口（场景二使用，平时隐藏）─────────────────────────────
+      // 路口 Group 在世界空间里 z 轴方向滚动，模拟骑手前进
+      this._intersectionGroup = new THREE.Group()
+      this._intersectionGroup.visible = false
+      this._s.add(this._intersectionGroup)
+      const ig = this._intersectionGroup
+
+      // ── 路口场景：主角沿 +z 前进，横穿车沿 +x 方向水平穿越（90° 交叉）──
+      // 地面道路由全局地面 + 动态虚线轨迹表示，路口不另建道路平面
+
+      // ── 左侧遮挡围栏：沿主角行进方向（z轴）延伸，挡住横穿车来向视线 ──
+      // 围栏在停止线后方（z=-3~-9），主角左侧（x=-2.2），横穿车从围栏左端（x=-10）绕出
+      const fenceMat = new THREE.MeshLambertMaterial({ color: 0x94a3b8 })
+      const fence = new THREE.Mesh(new THREE.BoxGeometry(0.25, 2.2, 9), fenceMat)
+      fence.position.set(-2.2, 1.1, -5.5)  // z中心=-5.5，占 z=-1~-10，停止线后方不压横穿道
+      fence.castShadow = true; fence.receiveShadow = true
+      ig.add(fence)
+      // 围栏竖杆
+      for (let i = 0; i < 9; i++) {
+        const post = new THREE.Mesh(
+          new THREE.BoxGeometry(0.12, 2.4, 0.12),
+          new THREE.MeshLambertMaterial({ color: 0x64748b })
+        )
+        post.position.set(-2.2, 1.2, -1.5 - i * 1.0)
+        ig.add(post)
+      }
 
       // ── 骑手模型：加载 scooter.glb ──
       this._gltfLoader.load('/3dmodel/scooter.glb', (gltf) => {
@@ -690,74 +795,111 @@ export default {
     },
 
     _buildScanRings(parent) {
-      // 三个同心扫描圆：半径按视觉坐标（实际距离×3），对应实际1m/2m/3m
-      const ringMat = (opacity) => new THREE.MeshBasicMaterial({
-        color: 0x3b82f6, side: THREE.DoubleSide, transparent: true, opacity
-      })
-      for (const [r, op] of [[3, 0.10], [6, 0.07], [9, 0.04]]) {
-        const ring = new THREE.Mesh(new THREE.RingGeometry(r - 0.04, r + 0.04, 64), ringMat(op + 0.08))
-        ring.rotation.x = -Math.PI / 2
-        ring.position.y = 0.015
-        parent.add(ring)
+      // 锥形扩散波：从骑手中心朝前方(+z)发出扇形脉冲
+      const NUM_WAVES  = 5
+      const MAX_R      = 14
+      const HALF_ANGLE = Math.PI / 4   // 半角 45°，共 90°
 
-        const fill = new THREE.Mesh(new THREE.CircleGeometry(r, 64), new THREE.MeshBasicMaterial({
-          color: 0x3b82f6, transparent: true, opacity: op, side: THREE.DoubleSide
-        }))
-        fill.rotation.x = -Math.PI / 2
-        fill.position.y = 0.01
-        parent.add(fill)
+      this._scanWaves = []
+      for (let i = 0; i < NUM_WAVES; i++) {
+        const mat = new THREE.MeshBasicMaterial({
+          color: 0x3b82f6,
+          side: THREE.DoubleSide,
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        })
+        // 扇形顶点在原点，圆弧朝 -y（rotation.x=-90° 后变成 +z 前方）
+        const shape = new THREE.Shape()
+        shape.moveTo(0, 0)
+        const SEG = 32
+        for (let s = 0; s <= SEG; s++) {
+          const a = -HALF_ANGLE + (HALF_ANGLE * 2 * s / SEG)
+          shape.lineTo(Math.sin(a), -Math.cos(a))   // -cos → 朝前
+        }
+        shape.closePath()
+        const geo = new THREE.ShapeGeometry(shape)
+        const mesh = new THREE.Mesh(geo, mat)
+        mesh.rotation.x = -Math.PI / 2
+        mesh.position.y = 0.02
+        mesh.userData.phase = i / NUM_WAVES
+        mesh.userData.maxR  = MAX_R
+        parent.add(mesh)
+        this._scanWaves.push(mesh)
+      }
+
+      // 距离刻度弧线（前方扇区）
+      for (const [r, op] of [[3, 0.13], [6, 0.09], [10, 0.05]]) {
+        const SEG = 32
+        const pts = []
+        for (let s = 0; s <= SEG; s++) {
+          const a = -HALF_ANGLE + (HALF_ANGLE * 2 * s / SEG)
+          pts.push(new THREE.Vector3(Math.sin(a) * r, -Math.cos(a) * r, 0))
+        }
+        const arcGeo = new THREE.BufferGeometry().setFromPoints(pts)
+        const arc = new THREE.Line(arcGeo, new THREE.LineBasicMaterial({ color: 0x93c5fd, transparent: true, opacity: op }))
+        arc.rotation.x = -Math.PI / 2
+        arc.position.y = 0.015
+        parent.add(arc)
       }
     },
 
     // 根据当前轨迹更新红色扇形标记
-    _updateSectors(tracks) {
-      if (!this._sectorGroup) return
-      // 清空旧扇形
-      while (this._sectorGroup.children.length > 0) {
-        const c = this._sectorGroup.children[0]
-        c.geometry.dispose()
-        c.material.dispose()
-        this._sectorGroup.remove(c)
-      }
-      if (!tracks.length) return
-
-      const sectorMat = new THREE.MeshBasicMaterial({
-        color: 0xef4444,
-        transparent: true,
-        opacity: 0.35,
-        side: THREE.DoubleSide,
-        depthWrite: false
-      })
-
-      tracks.forEach(t => {
-        // 雷达坐标：x 右，y 前，对应 Three.js xz 平面
-        // azimuth = atan2(x, y) 即从前方顺时针角度，转换为 Three.js 角度
-        const angleRad = Math.atan2(t.x, t.y) + Math.PI  // 方位角旋转180°
-        const halfSpan = Math.PI / 18            // 扇形半角 10°
-        const r = Math.min(t.dist + 0.5, 10.5)  // 扇形延伸到目标距离
-
-        const shape = new THREE.Shape()
-        shape.moveTo(0, 0)
-        const segments = 16
-        for (let i = 0; i <= segments; i++) {
-          const a = angleRad - halfSpan + (halfSpan * 2 * i / segments)
-          shape.lineTo(Math.sin(a) * r, Math.cos(a) * r)
-        }
-        shape.closePath()
-
-        const geo = new THREE.ShapeGeometry(shape)
-        const mesh = new THREE.Mesh(geo, sectorMat.clone())
-        // 危险距离加深扇形
-        if (t.dist < 3) mesh.material.opacity = 0.55
-        else if (t.dist < 8) mesh.material.opacity = 0.40
-        this._sectorGroup.add(mesh)
-      })
-    },
+    _updateSectors(_tracks) { /* 已移除扇形标注 */ },
     renderLoop() {
       this._raf = requestAnimationFrame(this.renderLoop)
       const t = performance.now() * 0.001
       const delta = this._prevT ? t - this._prevT : 0.016
       this._prevT = t
+
+      // ── 虚线轨迹 + 箭头滚动（模拟骑手前进感）─────────────────────
+      if (this._laneLines) {
+        const riderSpeed = this.sc1Active && this._sc1 ? this._sc1.riderSpeed : 4.0
+        this._laneLines.forEach(({ segs, spacing }) => {
+          segs.forEach(seg => {
+            seg.position.z -= riderSpeed * delta
+            if (seg.position.z < -60) seg.position.z += 120
+          })
+        })
+        if (this._arrowSegs) {
+          this._arrowSegs.forEach(seg => {
+            seg.position.z -= riderSpeed * delta
+            if (seg.position.z < -60) seg.position.z += 120
+          })
+        }
+      }
+
+      // ── 动态扩散波纹 ──────────────────────────────────────────────
+      if (this._scanWaves) {
+        const PERIOD = 2.8   // 每圈从出发到消失的总时长（秒）
+        this._scanWaves.forEach(wave => {
+          const maxR = wave.userData.maxR
+          // progress 0→1：加相位错开，modulo 循环
+          const progress = ((t / PERIOD + wave.userData.phase) % 1)
+          const r = progress * maxR
+
+          // 用 scale 驱动扇形大小（shape 是单位扇形 radius=1）
+          wave.scale.set(r, r, 1)
+
+          // 透明度曲线：淡入→保持→淡出
+          let alpha
+          if (progress < 0.12) {
+            alpha = progress / 0.12
+          } else if (progress < 0.6) {
+            alpha = 1
+          } else {
+            alpha = 1 - (progress - 0.6) / 0.4
+          }
+          wave.material.opacity = alpha * (0.45 - progress * 0.28)
+
+          // 颜色：危险时红，默认蓝
+          const hasDanger = this.tracks && this.tracks.some(tr => tr.dist < 4)
+          const warnColor = this.sc1Warning === 'danger' ? 0xef4444
+            : this.sc1Warning === 'caution' ? 0xf97316
+            : (hasDanger ? 0xf87171 : 0x3b82f6)
+          wave.material.color.setHex(warnColor)
+        })
+      }
 
       // 骑手光圈脉冲动画
       if (this._riderGroup) {
@@ -769,6 +911,12 @@ export default {
       for (const mixer of Object.values(this._mixers)) {
         mixer.update(delta)
       }
+
+      // ── 场景一逐帧驱动 ────────────────────────────────────────────
+      if (this.sc1Active) this._tickScenario1(delta, t)
+
+      // ── 场景二逐帧驱动 ────────────────────────────────────────────
+      if (this.sc2Active) this._tickScenario2(delta)
 
       this._r.render(this._s, this._c)
     },
@@ -1055,6 +1203,546 @@ export default {
       return 'state-idle'
     },
 
+    // ══════════════════════════════════════════════════════════════
+    //  场景一：并行变道预警
+    //  时间轴（16s 循环）：
+    //  Phase0 [0~5s]   并行追上：并行车从后方(z=-8)追至与主角齐平
+    //  Phase1 [5~8s]   并行同行：双车并排，速度相同
+    //  Phase2 [8~10s]  紧急变道：并行车横切至主角车道（x:2→-1.5）
+    //  Phase3 [10~13s] 主角制动：减速→停止，警告全屏
+    //  Phase4 [13~16s] 复位：并行车驶离，主角恢复，场景归零
+    // ══════════════════════════════════════════════════════════════
+
+    startScenario1() {
+      if (this.sc1Active) { this.stopScenario1(); return }
+      this._initScenario1()
+      this.sc1Active = true
+    },
+
+    stopScenario1() {
+      this._destroyScenario1()
+      this.sc1Active = false
+      this.sc1Phase = 0
+      this.sc1Warning = 'safe'
+      this.sc1WarnMsg = ''
+      this.sc1RiderSpeed = 0
+      this.sc1CarDist = 0
+      this.sc1PhaseLabel = ''
+    },
+
+    _initScenario1() {
+      if (!this._s) return
+      this._sc1 = {
+        clock: 0,
+
+        // 主角状态（不移动骑手模型，而是移动道路/车道线制造运动感）
+        riderZ: 0,
+        riderSpeed: 0,
+
+        // 并行车 Group
+        carGroup: null,
+        carZ: -10,
+        carX: 2.0,
+      }
+
+      // ── 并行车实体 ──
+      const carGroup = new THREE.Group()
+      carGroup.position.set(2.0, 0, -10)
+      carGroup.rotation.y = 0   // 朝 +z 方向行驶
+
+      // 占位方块（scooter.glb 加载完替换）
+      const ph = new THREE.Mesh(
+        new THREE.BoxGeometry(0.6, 0.9, 1.2),
+        new THREE.MeshPhongMaterial({ color: 0xef4444, emissive: 0x550000 })
+      )
+      ph.position.y = 0.45; ph.castShadow = true; ph.userData.isPlaceholder = true
+      carGroup.add(ph)
+
+      // 车底红色光晕
+      const glow = new THREE.Mesh(
+        new THREE.CircleGeometry(0.9, 48),
+        new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false })
+      )
+      glow.rotation.x = -Math.PI / 2; glow.position.y = 0.01
+      carGroup.add(glow)
+      this._sc1.glowMesh = glow
+
+      this._s.add(carGroup)
+      this._sc1.carGroup = carGroup
+
+      // 加载 scooter.glb（电动车）
+      this._gltfLoader.load('/3dmodel/scooter.glb', (gltf) => {
+        if (!this._sc1 || !this._sc1.carGroup) return
+        const m = gltf.scene; m.scale.setScalar(1.0)
+        m.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true } })
+        const placeholder = this._sc1.carGroup.children.find(c => c.userData.isPlaceholder)
+        if (placeholder) { placeholder.geometry.dispose(); this._sc1.carGroup.remove(placeholder) }
+        this._sc1.carGroup.add(m)
+      }, undefined, () => {})
+
+      // ── 实时距离标注 Sprite（距离 < 5m 时显示）──
+      const dc = document.createElement('canvas'); dc.width = 256; dc.height = 64
+      this._sc1._distCanvas = dc
+      this._sc1._distCtx = dc.getContext('2d')
+      const distTex = new THREE.CanvasTexture(dc)
+      const distSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: distTex, transparent: true, opacity: 0, depthTest: false }))
+      distSprite.scale.set(3, 0.75, 1)
+      this._s.add(distSprite)
+      this._sc1.distSprite = distSprite
+      this._sc1._distTex = distTex
+    },
+
+    _destroyScenario1() {
+      if (!this._sc1) return
+      if (this._sc1.carGroup)      { this._s.remove(this._sc1.carGroup) }
+      if (this._sc1.distSprite)    { this._s.remove(this._sc1.distSprite) }
+      // 恢复车道线位置
+      if (this._laneLines) {
+        this._laneLines.forEach(({ segs, x }) => {
+          segs.forEach((seg, i) => { seg.position.z = -60 + i * 4 })
+        })
+      }
+      this._sc1 = null
+    },
+
+    _tickScenario1(delta, t) {
+      if (!this._sc1 || !this.sc1Active) return
+      const sc = this._sc1
+      sc.clock += delta
+
+      const T = sc.clock
+      const CRUISE = 5.0   // 巡航速度 m/s
+      const DECEL  = 8.0   // 制动减速度
+
+      // ── 时间轴（8s 一轮）────────────────────────────────────────
+      // [0~2s]  Phase0: 并行车从后方快速追上（z:-8→1.5）
+      // [2~4s]  Phase2: 紧急变道超车（x:2→-1.5），主角开始刹车
+      // [4~6.5s] Phase3: 完全制动，并行车回正高速驶离
+      // [6.5~8s] Phase4: 危险解除，主角恢复
+      // [8s+]   循环重置
+
+      if (T < 2.0) {
+        // Phase0: 追上
+        this.sc1Phase = 0
+        this.sc1PhaseLabel = '并行追上'
+        this.sc1Warning = 'safe'
+        this.sc1WarnMsg = '周边安全'
+
+        const p = T / 2.0
+        sc.riderSpeed = CRUISE * Math.min(p * 1.5, 1.0)
+        const carZ = -8 + 9.5 * p           // -8 → 1.5
+        sc.carGroup.position.set(2.0, 0, carZ)
+        sc.carGroup.rotation.y = 0
+        sc.glowMesh.material.opacity = 0.2 + 0.15 * p
+
+      } else if (T < 4.0) {
+        // Phase2: 紧急变道超车
+        this.sc1Phase = 2
+        this.sc1PhaseLabel = '紧急变道！'
+        this.sc1Warning = 'danger'
+        this.sc1WarnMsg = '⚠ 右侧车辆紧急切入！'
+
+        const p = (T - 2.0) / 2.0
+        const sm = p * p * (3 - 2 * p)      // smoothstep 0→1
+        const carX = 2.0 - 3.5 * sm         // 2.0 → -1.5
+        // 变道车身侧倾：前半倾入，后半回正
+        const lean = sm < 0.5 ? -sm * 2 * 0.5 : -(1 - (sm - 0.5) * 2) * 0.5
+        sc.carGroup.position.set(carX, 0, 1.5 + p * 3)
+        sc.carGroup.rotation.y = lean
+
+        sc.riderSpeed = Math.max(0, CRUISE * (1 - sm * 0.7))
+        sc.glowMesh.material.color.setHex(0xff2200)
+        sc.glowMesh.material.opacity = 0.5 + 0.25 * Math.sin(t * 10)
+
+      } else if (T < 6.5) {
+        // Phase3: 完全制动 + 并行车回正高速驶离
+        this.sc1Phase = 3
+        this.sc1PhaseLabel = '紧急制动'
+        this.sc1Warning = 'danger'
+        this.sc1WarnMsg = '⚠ 紧急制动！'
+
+        sc.riderSpeed = Math.max(0, sc.riderSpeed - DECEL * delta)
+
+        // 0.3s 内车身回正，然后笔直前驶
+        const straightenT = Math.min((T - 4.0) / 0.3, 1.0)
+        sc.carGroup.rotation.y = sc.carGroup.rotation.y * (1 - straightenT)
+        sc.carGroup.position.z += CRUISE * 2.0 * delta
+
+
+      } else if (T < 8.0) {
+        // Phase4: 危险解除，恢复行驶
+        this.sc1Phase = 4
+        this.sc1PhaseLabel = '恢复行驶'
+        this.sc1Warning = 'safe'
+        this.sc1WarnMsg = '危险解除，恢复行驶'
+
+        const p4 = (T - 6.5) / 1.5
+        sc.riderSpeed = CRUISE * p4 * 0.8
+        sc.carGroup.rotation.y = 0
+        sc.carGroup.position.z += CRUISE * 2.0 * delta
+
+        sc.glowMesh.material.color.setHex(0xef4444)
+        sc.glowMesh.material.opacity = 0.2
+
+      } else {
+        // 循环重置
+        sc.clock = 0
+        sc.riderSpeed = 0
+        sc.carGroup.position.set(2.0, 0, -8)
+        sc.carGroup.rotation.y = 0
+        sc.glowMesh.material.color.setHex(0xef4444)
+        sc.glowMesh.material.opacity = 0.2
+      }
+
+      // ── 驱动道路流动（替代主角移动）──
+      if (this._laneLines) {
+        this._laneLines.forEach(({ segs }) => {
+          segs.forEach(seg => {
+            seg.position.z -= sc.riderSpeed * delta
+            if (seg.position.z < -60) seg.position.z += 120
+          })
+        })
+      }
+      // 路过车辆速度也随主角速度同步（场景激活时接管）
+      if (this._roamCars) {
+        this._roamCars.forEach(({ group, lane }) => {
+          const dir = lane.zEnd > lane.zStart ? 1 : -1
+          group.position.z += dir * Math.abs(lane.speed) * delta
+          const reached = dir > 0 ? group.position.z > lane.zEnd : group.position.z < lane.zEnd
+          if (reached) group.position.z = lane.zStart
+        })
+      }
+
+      // 更新 HUD 数据
+      this.sc1RiderSpeed = sc.riderSpeed
+      const dx = sc.carGroup.position.x - 0
+      const dz = sc.carGroup.position.z - 0
+      const realDist = Math.sqrt(dx * dx + dz * dz)
+      this.sc1CarDist = realDist
+
+      // ── 实时距离标注（< 5m 才显示，跟随并行车位置）──
+      if (sc.distSprite) {
+        if (realDist < 5.0) {
+          // 更新 canvas 文字
+          const dc = sc._distCanvas
+          const ctx = sc._distCtx
+          ctx.clearRect(0, 0, dc.width, dc.height)
+          const danger = realDist < 2.5
+          ctx.fillStyle = danger ? 'rgba(239,68,68,0.92)' : 'rgba(249,115,22,0.88)'
+          ctx.beginPath()
+          ctx.roundRect(4, 4, dc.width - 8, dc.height - 8, 10)
+          ctx.fill()
+          ctx.fillStyle = '#fff'
+          ctx.font = 'bold 26px sans-serif'
+          ctx.textAlign = 'center'
+          ctx.textBaseline = 'middle'
+          ctx.fillText(`距离  ${realDist.toFixed(1)} m`, dc.width / 2, dc.height / 2)
+          sc._distTex.needsUpdate = true
+          // 跟随并行车，悬浮在车辆上方
+          sc.distSprite.position.set(
+            sc.carGroup.position.x,
+            2.2,
+            sc.carGroup.position.z
+          )
+          sc.distSprite.material.opacity = Math.min(1, (5.0 - realDist) / 1.5)
+        } else {
+          sc.distSprite.material.opacity = 0
+        }
+      }
+
+      // 扩散波颜色根据预警等级变化
+      if (this._scanWaves) {
+        const waveColor = this.sc1Warning === 'danger' ? 0xef4444
+          : this.sc1Warning === 'caution' ? 0xf97316
+          : 0x3b82f6
+        this._scanWaves.forEach(w => w.material.color.setHex(waveColor))
+      }
+    },
+
+    // ══════════════════════════════════════════════════════════════
+    //  场景二：路口相汇预警（18s 循环）
+    // ══════════════════════════════════════════════════════════════
+
+    startScenario2() {
+      if (this.sc2Active) { this.stopScenario2(); return }
+      // 场景互斥：先停场景一
+      if (this.sc1Active) this.stopScenario1()
+      this._initScenario2()
+      this.sc2Active = true
+    },
+
+    stopScenario2() {
+      this._destroyScenario2()
+      this.sc2Active = false
+      this.sc2Phase = 0
+      this.sc2Warning = 'safe'
+      this.sc2WarnMsg = ''
+      this.sc2TTC = 0
+      this.sc2RiderSpeed = 0
+    },
+
+    _initScenario2() {
+      if (!this._s) return
+      // 降低场景可视度（雾气收紧 + 环境光减弱）
+      if (this._s.fog) { this._s.fog.near = 12; this._s.fog.far = 32 }
+      if (this._ambLight) this._ambLight.intensity = 1.0
+      // 路口初始位置：骑手前方 35m，随骑手前进向近处滚来
+      if (this._intersectionGroup) {
+        this._intersectionGroup.visible = true
+        this._intersectionGroup.position.set(0, 0, 17)
+      }
+
+      this._sc2 = {
+        clock: 0,
+        riderSpeed: 0,
+        crossGroup: null,
+        crossDist: 0,
+        crossVel: 0,    // 横穿车当前速度（有加减速）
+        crossPauseT: 0,
+      }
+
+      // ── 横穿车：从左侧围栏后（x=-16）沿 +x 方向穿过路口 ──
+      // scooter.glb 默认朝 +z，转 +90° 朝 +x
+      const CROSS_DIR_X = 1
+      const CROSS_DIR_Z = 0
+      const CROSS_START_X = -22
+      const CROSS_START_Z = 0
+      const crossGroup = new THREE.Group()
+      crossGroup.position.set(CROSS_START_X, 0, CROSS_START_Z)
+      crossGroup.rotation.y = Math.PI / 2   // scooter 默认朝+z，转+90°朝+x
+      this._sc2.crossGroup = crossGroup
+      this._sc2._dirX = CROSS_DIR_X
+      this._sc2._dirZ = CROSS_DIR_Z
+      this._sc2._startX = CROSS_START_X
+      this._sc2._startZ = CROSS_START_Z
+      this._intersectionGroup.add(crossGroup)
+
+      // 占位方块
+      const ph = new THREE.Mesh(
+        new THREE.BoxGeometry(0.6, 0.9, 1.2),
+        new THREE.MeshPhongMaterial({ color: 0xf97316, emissive: 0x552200 })
+      )
+      ph.position.y = 0.45; ph.castShadow = true; ph.userData.isPlaceholder = true
+      crossGroup.add(ph)
+
+      // 车底光晕
+      const glow = new THREE.Mesh(
+        new THREE.CircleGeometry(0.9, 48),
+        new THREE.MeshBasicMaterial({ color: 0xf97316, transparent: true, opacity: 0.3, side: THREE.DoubleSide, depthWrite: false })
+      )
+      glow.rotation.x = -Math.PI / 2; glow.position.y = 0.01
+      crossGroup.add(glow)
+      this._sc2.glowMesh = glow
+
+      // 加载 scooter.glb
+      this._gltfLoader.load('/3dmodel/scooter.glb', (gltf) => {
+        if (!this._sc2 || !this._sc2.crossGroup) return
+        const m = gltf.scene; m.scale.setScalar(1.0)
+        m.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true } })
+        const ph2 = this._sc2.crossGroup.children.find(c => c.userData.isPlaceholder)
+        if (ph2) { ph2.geometry.dispose(); this._sc2.crossGroup.remove(ph2) }
+        this._sc2.crossGroup.add(m)
+      }, undefined, () => {})
+
+      // ── TTC / 距离标注 Sprite ──
+      const dc = document.createElement('canvas'); dc.width = 300; dc.height = 72
+      this._sc2._distCanvas = dc
+      this._sc2._distCtx = dc.getContext('2d')
+      const distTex = new THREE.CanvasTexture(dc)
+      const distSprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: distTex, transparent: true, opacity: 0, depthTest: false }))
+      distSprite.scale.set(3.5, 0.84, 1)
+      this._s.add(distSprite)
+      this._sc2.distSprite = distSprite
+      this._sc2._distTex = distTex
+    },
+
+    _destroyScenario2() {
+      if (!this._sc2) return
+      // crossGroup 是 _intersectionGroup 的子节点，随 Group 隐藏即可，不需要从 _s 移除
+      if (this._sc2.crossGroup && this._intersectionGroup) {
+        this._intersectionGroup.remove(this._sc2.crossGroup)
+      }
+      if (this._sc2.distSprite)  this._s.remove(this._sc2.distSprite)
+      if (this._intersectionGroup) {
+        this._intersectionGroup.visible = false
+        this._intersectionGroup.position.z = 0
+      }
+      // 恢复正常可视度
+      if (this._s.fog) { this._s.fog.near = 18; this._s.fog.far = 45 }
+      if (this._ambLight) this._ambLight.intensity = 1.4
+      this._sc2 = null
+    },
+
+    _tickScenario2(delta) {
+      if (!this._sc2 || !this.sc2Active) return
+      const sc = this._sc2
+      sc.clock += delta
+      const T = sc.clock
+
+      const CRUISE    = 4.5   // 主角巡航速度 m/s
+      const DECEL     = 9.0   // 制动减速度
+      const CROSS_SPD = 8.0   // 横穿车速度 m/s（加快使两车更近时相遇）
+      const ig = this._intersectionGroup
+
+      // 横穿车位置更新
+      const updateCrossPos = (dist) => {
+        sc.crossGroup.position.x = sc._startX + sc._dirX * dist
+        sc.crossGroup.position.z = sc._startZ + sc._dirZ * dist
+      }
+
+      const CROSS_ACCEL = 4.0   // 加速度 m/s²
+      const CROSS_DECEL = 12.0  // 减速度 m/s²
+      const STOP_AT  = Math.abs(sc._startX)   // 目标停车点 = 22（路口中心 x=0）
+      // 提前开始减速：v²/(2a) = 64/24 ≈ 2.67m，留 0.3m 余量
+      const DECEL_AT = STOP_AT - (CROSS_SPD * CROSS_SPD) / (2 * CROSS_DECEL) - 0.3  // ≈ 19.0
+      const PAUSE_DUR = 1.5  // 路口中心停留秒数
+
+      // crossPhase: 0=加速行驶  1=减速停车  2=停车暂停  3=暂停后恢复
+      if (sc.crossPhase === undefined) sc.crossPhase = 0
+
+      const advanceCross = (shouldMove = true) => {
+        if (!shouldMove) {
+          sc.crossVel = Math.max(0, sc.crossVel - CROSS_DECEL * delta)
+        } else {
+          // 状态机推进
+          if (sc.crossPhase === 0) {
+            // 正常加速行驶
+            sc.crossVel = Math.min(CROSS_SPD, sc.crossVel + CROSS_ACCEL * delta)
+            if (sc.crossDist >= DECEL_AT) sc.crossPhase = 1
+          } else if (sc.crossPhase === 1) {
+            // 减速至停车
+            sc.crossVel = Math.max(0, sc.crossVel - CROSS_DECEL * delta)
+            if (sc.crossVel <= 0) { sc.crossVel = 0; sc.crossPhase = 2 }
+          } else if (sc.crossPhase === 2) {
+            // 停车暂停计时
+            sc.crossVel = 0
+            sc.crossPauseT += delta
+            if (sc.crossPauseT >= PAUSE_DUR) sc.crossPhase = 3
+          } else {
+            // 暂停结束，恢复加速离开
+            sc.crossVel = Math.min(CROSS_SPD, sc.crossVel + CROSS_ACCEL * delta)
+          }
+        }
+        sc.crossDist += sc.crossVel * delta
+        updateCrossPos(sc.crossDist)
+      }
+
+      // 主角到路口交点的距离（路口Group.z 即交点世界z，主角在 z=0）
+      const juncZ = ig.position.z
+      const distToStop = Math.max(0, juncZ - 1.0)    // 停在围栏末端（围栏本地z=-1.0）
+
+      // 横穿车到交叉点的剩余距离（起点距交叉点 ≈ sqrt(13²+5²) ≈ 13.9m）
+      const CROSS_TO_JUNC = Math.sqrt(sc._startX ** 2 + sc._startZ ** 2)  // ≈ 13.9
+      const crossDistToJunc = Math.max(0, CROSS_TO_JUNC - sc.crossDist)
+
+      // ── 阶段时间轴 ──────────────────────────────────────────────
+      // [0~1s]   Phase0: 主角加速，横穿车静止
+      // [1~10s]  Phase1: 横穿车启动，TTC 预警
+      // [10~13s] Phase2: 主角刹停，横穿车通过
+      // [13~17s] Phase3: 主角恢复前进
+      // [17~20s] Phase4: 复位
+      // [20s+]   循环
+
+      if (T < 8.0) {
+        this.sc2Phase = 0; this.sc2PhaseLabel = '正常行驶'
+        this.sc2Warning = 'safe'; this.sc2WarnMsg = '前方路口注意'
+        sc.riderSpeed = CRUISE * Math.min(T / 1.0, 1.0)
+        if (T >= 0) advanceCross()
+        else updateCrossPos(0)
+        this.sc2TTC = 0
+          const ttcRider = sc.riderSpeed > 0.1 ? distToStop / sc.riderSpeed : 99
+        const ttcCross = crossDistToJunc / CROSS_SPD
+        const ttc = Math.min(ttcRider > 0 ? ttcRider : 99, ttcCross > 0 ? ttcCross : 99)
+        this.sc2TTC = Math.max(0, ttc)
+
+        if (ttc < 1.0) {
+          this.sc2Phase = 1; this.sc2PhaseLabel = '紧急制动！'
+          this.sc2Warning = 'danger'; this.sc2WarnMsg = `⚠ TTC ${ttc.toFixed(1)}s 紧急制动！`
+          sc.riderSpeed = Math.max(0, sc.riderSpeed - DECEL * delta)
+        } else if (ttc < 3.5) {
+          this.sc2Phase = 1; this.sc2PhaseLabel = 'TTC 预警'
+          this.sc2Warning = 'caution'; this.sc2WarnMsg = `⚠ 路口预警 TTC ${ttc.toFixed(1)}s`
+          sc.riderSpeed = Math.max(0, sc.riderSpeed - DECEL * 0.4 * delta)
+        } else {
+          this.sc2Phase = 0; this.sc2PhaseLabel = '接近路口'
+          this.sc2Warning = 'safe'; this.sc2WarnMsg = '前方路口请减速'
+        }
+      } else if (T < 7.0) {
+        advanceCross(false)   // 横穿车减速停下（等待主角通过）
+        this.sc2Phase = 2; this.sc2PhaseLabel = '等待通行'
+        this.sc2Warning = 'danger'; this.sc2WarnMsg = '停止线前等待'
+        sc.riderSpeed = Math.max(0, sc.riderSpeed - DECEL * delta)
+        this.sc2TTC = 0
+
+      } else if (T < 13.0) {
+        advanceCross()        // 横穿车恢复行驶
+        this.sc2Phase = 3; this.sc2PhaseLabel = '恢复通行'
+        this.sc2Warning = 'safe'; this.sc2WarnMsg = '路口已清空，通行'
+        sc.riderSpeed = Math.max(0, CRUISE * Math.min((T - 9.0) / 2.5, 1.0))
+        this.sc2TTC = 0
+
+      } else if (T < 20.0) {
+        this.sc2Phase = 4; this.sc2PhaseLabel = '复位中'
+        this.sc2Warning = 'safe'; this.sc2WarnMsg = ''
+        sc.riderSpeed = 0
+
+      } else {
+        // 循环重置
+        sc.clock = 0; sc.riderSpeed = 0; sc.crossDist = 0; sc.crossVel = 0; sc.crossPauseT = 0; sc.crossPhase = 0
+        ig.position.z = 17
+        updateCrossPos(0)
+        sc.glowMesh.material.opacity = 0.3
+      }
+
+      // ── 路口 Group + 道路虚线 + 箭头 同步向骑手滚动 ──
+      if (sc.riderSpeed > 0) {
+        const dz = sc.riderSpeed * delta
+        // 路口滚动（从前方 15m 处飞来，接近后不再滚动以防穿过骑手）
+        if (ig.position.z > 3.0) ig.position.z -= dz
+
+        this._laneLines && this._laneLines.forEach(({ segs }) => {
+          segs.forEach(seg => { seg.position.z -= dz; if (seg.position.z < -60) seg.position.z += 120 })
+        })
+        this._arrowSegs && this._arrowSegs.forEach(seg => {
+          seg.position.z -= dz; if (seg.position.z < -60) seg.position.z += 120
+        })
+      }
+
+      this.sc2RiderSpeed = sc.riderSpeed
+
+      // ── TTC / 距离 Sprite 更新 ──
+      if (sc.distSprite && sc.crossGroup) {
+        // 横穿车世界坐标 = 路口Group世界位置 + 本地位置（Group无x/z偏移外的部分）
+        const ig2 = this._intersectionGroup
+        const wx = sc.crossGroup.position.x   // Group.x 偏移为0，直接是世界x
+        const wz = ig2.position.z + sc.crossGroup.position.z  // 路口z + 本地z
+        const dist2D = Math.sqrt(wx * wx + wz * wz)
+        if (dist2D < 10.0) {
+          const dc = sc._distCanvas; const ctx = sc._distCtx
+          ctx.clearRect(0, 0, dc.width, dc.height)
+          const danger = this.sc2Warning === 'danger'
+          ctx.fillStyle = danger ? 'rgba(239,68,68,0.92)' : 'rgba(249,115,22,0.88)'
+          ctx.beginPath(); ctx.roundRect(4, 4, dc.width - 8, dc.height - 8, 10); ctx.fill()
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 24px sans-serif'
+          ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+          const ttcStr = this.sc2TTC > 0 && this.sc2TTC < 99 ? `  TTC ${this.sc2TTC.toFixed(1)}s` : ''
+          ctx.fillText(`距离 ${dist2D.toFixed(1)}m${ttcStr}`, dc.width / 2, dc.height / 2)
+          sc._distTex.needsUpdate = true
+          sc.distSprite.position.set(wx, 2.5, wz)
+          sc.distSprite.material.opacity = Math.min(1, (10.0 - dist2D) / 4.0)
+        } else {
+          sc.distSprite.material.opacity = 0
+        }
+      }
+
+      // 扩散波颜色跟场景二预警等级
+      if (this._scanWaves) {
+        const wc = this.sc2Warning === 'danger' ? 0xef4444
+          : this.sc2Warning === 'caution' ? 0xf97316 : 0x3b82f6
+        this._scanWaves.forEach(w => w.material.color.setHex(wc))
+      }
+    },
+
     updateTime() {
       this.currentTime = new Date().toLocaleTimeString('zh-CN', { hour12: false })
     }
@@ -1174,28 +1862,6 @@ export default {
   background: @bg;
   canvas { width: 100% !important; height: 100% !important; display: block; }
 
-  .danger-border-alert {
-    position: absolute; inset: 0;
-    pointer-events: none;
-    border: 4px solid @red;
-    border-radius: 4px;
-    box-shadow: 0 0 0 4px rgba(239,68,68,0.25) inset,
-                0 0 24px 4px rgba(239,68,68,0.35);
-    animation: dangerFrame 0.6s ease-in-out infinite;
-    z-index: 10;
-
-    .alert-label {
-      position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
-      display: flex; align-items: center; gap: 6px;
-      background: rgba(239,68,68,0.9);
-      color: #fff;
-      font-size: 14px; font-weight: 700;
-      padding: 5px 16px; border-radius: 100px;
-      white-space: nowrap;
-      letter-spacing: 0.5px;
-      box-shadow: 0 2px 12px rgba(239,68,68,0.5);
-    }
-  }
 
   .hint {
     position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
@@ -1802,4 +2468,77 @@ export default {
 .cam-wrap { display: none; }
 .detection-tags { display: none; }
 .cam-hint { display: none; }
+
+/* ── 场景一：按钮 + HUD ───────────────────────────────────────── */
+.sc1-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid #2563eb;
+  background: rgba(37,99,235,0.08);
+  color: #2563eb;
+  font-size: 11px; font-weight: 600;
+  cursor: pointer;
+  transition: all 0.18s;
+  flex-shrink: 0;
+  &:hover { background: rgba(37,99,235,0.15); }
+  &.active {
+    background: rgba(239,68,68,0.12);
+    border-color: #ef4444;
+    color: #ef4444;
+  }
+}
+
+.sc1-hud {
+  position: absolute;
+  top: 12px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  pointer-events: none;
+  z-index: 20;
+
+  .sc1-phase-badge {
+    display: flex; align-items: center; gap: 5px;
+    padding: 4px 12px;
+    border-radius: 20px;
+    background: rgba(37,99,235,0.85);
+    color: #fff;
+    font-size: 11px; font-weight: 700;
+    backdrop-filter: blur(6px);
+    transition: background 0.3s;
+    &.caution { background: rgba(249,115,22,0.85); }
+    &.danger  { background: rgba(239,68,68,0.85); animation: sc1-flash 0.5s infinite alternate; }
+  }
+
+  .sc1-metrics {
+    display: flex; align-items: center; gap: 8px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: rgba(0,0,0,0.45);
+    color: rgba(255,255,255,0.85);
+    font-size: 10px;
+    backdrop-filter: blur(4px);
+
+    em { font-style: normal; color: rgba(255,255,255,0.5); margin-right: 3px; }
+  }
+  .sc1-divider { color: rgba(255,255,255,0.3); }
+
+  .sc1-warn-msg {
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: rgba(249,115,22,0.8);
+    color: #fff;
+    font-size: 10px; font-weight: 600;
+    backdrop-filter: blur(4px);
+    &.danger { background: rgba(239,68,68,0.9); }
+  }
+}
+
+.sc1-fade-enter-active, .sc1-fade-leave-active { transition: opacity 0.3s; }
+.sc1-fade-enter-from, .sc1-fade-leave-to { opacity: 0; }
+
+@keyframes sc1-flash {
+  from { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+  to   { box-shadow: 0 0 0 6px rgba(239,68,68,0.35); }
+}
 </style>
